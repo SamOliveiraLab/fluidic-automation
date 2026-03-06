@@ -88,17 +88,17 @@ const exportPNG = (ref, filename) => {
 };
 
 /* ─── SMALL COMPONENTS ─── */
-const Dot=({s,th})=>{const c={online:th.success,warning:th.warning,offline:th.danger}[s]||th.textMuted;return<span style={{display:"inline-block",width:8,height:8,borderRadius:"50%",background:c,boxShadow:s==="online"?`0 0 6px ${c}80`:"none"}}/>};
+const Dot=({s,th})=>{const c={online:th.success,warning:th.warning,offline:th.danger}[s]||th.textMuted;return (<span style={{display:"inline-block",width:8,height:8,borderRadius:"50%",background:c,boxShadow:s==="online"?`0 0 6px ${c}80`:"none"}}/>)};
 
 const Tip=({active,payload,label,th})=>{
   if(!active||!payload?.length)return null;
-  return<div style={{background:th.surface,border:`1px solid ${th.border}`,borderRadius:10,padding:"10px 14px",boxShadow:th.shadow,fontSize:12}}>
+  return (<div style={{background:th.surface,border:`1px solid ${th.border}`,borderRadius:10,padding:"10px 14px",boxShadow:th.shadow,fontSize:12}}>
     <div style={{color:th.textMuted,marginBottom:6,fontWeight:600}}>{label} UTC</div>
     {payload.map((p,i)=><div key={i} style={{display:"flex",alignItems:"center",gap:8,marginBottom:2}}>
       <div style={{width:8,height:8,borderRadius:3,background:p.color}}/><span style={{color:th.textSecondary}}>{p.name}:</span>
       <span style={{fontWeight:700,color:th.text,fontFamily:"'JetBrains Mono',monospace"}}>{p.value?.toFixed(6)}</span>
     </div>)}
-  </div>
+  </div>)
 };
 
 /* ─── INTERPRETATION MODAL ─── */
@@ -106,7 +106,7 @@ const InterpModal=({open,onClose,th,title,text:interpText})=>{
   const[txt,setTxt]=useState("");const[loading,setL]=useState(false);
   useEffect(()=>{if(open){setL(true);setTxt("");const t=setTimeout(()=>{setTxt(interpText);setL(false)},1600);return()=>clearTimeout(t)}},[open,interpText]);
   if(!open)return null;
-  return<div onClick={onClose} style={{position:"fixed",inset:0,zIndex:1000,background:th.modalOverlay,display:"flex",alignItems:"center",justifyContent:"center",padding:20,backdropFilter:"blur(4px)"}}>
+  return (<div onClick={onClose} style={{position:"fixed",inset:0,zIndex:1000,background:th.modalOverlay,display:"flex",alignItems:"center",justifyContent:"center",padding:20,backdropFilter:"blur(4px)"}}>
     <div onClick={e=>e.stopPropagation()} style={{background:th.surface,borderRadius:18,maxWidth:560,width:"100%",maxHeight:"80vh",overflowY:"auto",border:`1px solid ${th.border}`,boxShadow:th.shadowHover}}>
       <div style={{padding:"20px 24px",borderBottom:`1px solid ${th.borderLight}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}><span style={{fontSize:20}}>🧬</span><div><h3 style={{margin:0,fontSize:16,fontWeight:700,color:th.text}}>{title}</h3><p style={{margin:0,fontSize:11,color:th.textMuted}}>AI-powered analysis</p></div></div>
@@ -114,13 +114,11 @@ const InterpModal=({open,onClose,th,title,text:interpText})=>{
       </div>
       <div style={{padding:"20px 24px"}}>{loading?<div style={{textAlign:"center",padding:"32px 0"}}><div style={{width:36,height:36,borderRadius:"50%",border:`3px solid ${th.borderLight}`,borderTopColor:th.accent,animation:"spin 0.8s linear infinite",margin:"0 auto 16px"}}/><p style={{color:th.textMuted,fontSize:13}}>Analyzing data...</p></div>:<div style={{fontFamily:'"Newsreader",Georgia,serif',fontSize:14.5,lineHeight:1.85,color:th.textSecondary,whiteSpace:"pre-wrap"}}>{txt}</div>}</div>
     </div>
-  </div>
+  </div>)
 };
-
-/* ─── DATA CHART SECTION ─── */
 const Chart=({th,title,subtitle,data,keys,colors,yFmt,csvCols,csvName,interpTitle,interpText,emptyIcon,emptyTitle,emptySub,emptyAction})=>{
   const[filter,setFilter]=useState("both");const[showI,setShowI]=useState(false);const ref=useRef(null);const has=data?.length>0;
-  return<><div ref={ref} style={{background:th.surface,border:`1px solid ${th.border}`,borderRadius:16,boxShadow:th.shadow,marginBottom:20,overflow:"hidden"}}>
+  return (<><div ref={ref} style={{background:th.surface,border:`1px solid ${th.border}`,borderRadius:16,boxShadow:th.shadow,marginBottom:20,overflow:"hidden"}}>
     <div style={{padding:"18px 22px",borderBottom:`1px solid ${th.borderLight}`,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
       <div style={{flex:1,minWidth:200}}><h2 style={{margin:0,fontSize:16,fontWeight:700,color:th.text}}>{title}</h2><p style={{margin:"4px 0 0",fontSize:12,color:th.textMuted}}>{subtitle}</p></div>
       <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
@@ -138,10 +136,10 @@ const Chart=({th,title,subtitle,data,keys,colors,yFmt,csvCols,csvName,interpTitl
       {keys.map((dk,i)=>(filter==="both"||filter===dk.key)&&<Area key={dk.key} type="monotone" dataKey={dk.key} name={dk.label} stroke={colors[i]} fill={`url(#f-${csvName}-${dk.key})`} strokeWidth={2.5} dot={false}/>)}
     </AreaChart></ResponsiveContainer></div>
     <div style={{padding:"14px 22px",borderTop:`1px solid ${th.borderLight}`,display:"flex",gap:24,flexWrap:"wrap"}}>
-      {keys.map((dk,i)=>{const vals=data.map(d=>d[dk.key]).filter(v=>v!=null);const cur=vals[vals.length-1];const delta=cur-vals[0];return<div key={dk.key} style={{display:"flex",gap:20}}>
+      {keys.map((dk,i)=>{const vals=data.map(d=>d[dk.key]).filter(v=>v!=null);const cur=vals[vals.length-1];const delta=cur-vals[0];return (<div key={dk.key} style={{display:"flex",gap:20}}>
         <div><div style={{fontSize:10,color:th.textMuted,fontWeight:600,marginBottom:2}}>{dk.s} Current</div><div style={{fontSize:16,fontWeight:700,color:colors[i],fontFamily:"'JetBrains Mono',monospace"}}>{cur?.toFixed(4)}</div></div>
         <div><div style={{fontSize:10,color:th.textMuted,fontWeight:600,marginBottom:2}}>{dk.s} Δ</div><div style={{fontSize:16,fontWeight:700,color:delta>=0?th.success:th.danger,fontFamily:"'JetBrains Mono',monospace"}}>{delta>=0?"+":""}{delta?.toFixed(4)}</div></div>
-      </div>})}
+      </div>)})}
     </div></>
     :<div style={{padding:"48px 24px",textAlign:"center",background:`repeating-linear-gradient(45deg,transparent,transparent 10px,${th.border}08 10px,${th.border}08 11px)`,borderRadius:8,margin:"16px 22px"}}>
       <div style={{fontSize:36,marginBottom:12,opacity:0.35}}>{emptyIcon}</div>
@@ -150,7 +148,7 @@ const Chart=({th,title,subtitle,data,keys,colors,yFmt,csvCols,csvName,interpTitl
       {emptyAction&&<div style={{marginTop:14,display:"inline-block",fontSize:11,fontWeight:700,color:th.accent,background:th.accentLight,padding:"6px 14px",borderRadius:7}}>{emptyAction}</div>}
     </div>}
   </div>
-  <InterpModal open={showI} onClose={()=>setShowI(false)} th={th} title={interpTitle} text={interpText||""}/></>
+  <InterpModal open={showI} onClose={()=>setShowI(false)} th={th} title={interpTitle} text={interpText||""}/></>)
 };
 
 /* ─── INTERPRETATIONS ─── */
@@ -176,7 +174,7 @@ export default function App(){
     <div style={{position:"absolute",inset:0,backgroundImage:`radial-gradient(${th.comingSoonBorder} 1px,transparent 1px)`,backgroundSize:"20px 20px",opacity:0.3}}/>
     <div style={{position:"relative"}}><div style={{fontSize:32,marginBottom:12,opacity:0.5}}>{icon}</div><div style={{display:"inline-block",fontSize:10,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",color:th.accent,background:th.accentLight,padding:"4px 12px",borderRadius:20,marginBottom:12}}>Coming Soon</div><h3 style={{margin:"0 0 8px",fontSize:16,fontWeight:700,color:th.text}}>{title}</h3><p style={{margin:0,fontSize:13,color:th.textMuted,lineHeight:1.6}}>{desc}</p></div></div>;
 
-  return<div style={{fontFamily:'"Outfit","Segoe UI",sans-serif',background:th.bg,minHeight:"100vh",color:th.text,transition:"background 0.3s,color 0.3s",position:"relative"}}>
+  return (<div style={{fontFamily:'"Outfit","Segoe UI",sans-serif',background:th.bg,minHeight:"100vh",color:th.text,transition:"background 0.3s,color 0.3s",position:"relative"}}>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Newsreader:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
     <div style={{position:"fixed",inset:0,zIndex:0,pointerEvents:"none",backgroundImage:`radial-gradient(${th.dotGrid} 1px,transparent 1px)`,backgroundSize:"24px 24px",opacity:0.5}}/>
     {sidebar&&<div onClick={()=>setSidebar(false)} style={{position:"fixed",inset:0,zIndex:90,background:th.modalOverlay}}/>}
@@ -240,5 +238,5 @@ export default function App(){
       <div style={{padding:"20px 24px",borderTop:`1px solid ${th.borderLight}`,textAlign:"center",fontSize:11,color:th.textMuted}}>Oliveira Lab · Bioreactor Dashboard v0.1 · Built by Bukola · {new Date().getFullYear()}</div>
     </div>
     <style>{`@keyframes spin{to{transform:rotate(360deg)}}*{box-sizing:border-box;margin:0}::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:${th.border};border-radius:3px}`}</style>
-  </div>
+  </div>)
 }
