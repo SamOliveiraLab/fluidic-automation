@@ -6,11 +6,11 @@ A custom bioreactor monitoring dashboard for the Oliveira Lab's Pioreactor clust
 
 This dashboard connects to a network of [Pioreactor](https://pioreactor.com) bioreactors and displays real-time data including:
 
-- **Optical Density (OD)** — Culture growth monitoring with 90° light scatter
-- **Temperature** — Thermal control and tracking
-- **Stirring (RPM)** — Mixing speed and stir bar health
-- **Pump Control** — Media, waste, and alt-media dosing automation
-- **AI Interpretation** — Claude-powered biological analysis of sensor data
+- **Optical Density (OD)** - Culture growth monitoring with 90° light scatter
+- **Temperature** - Thermal control and tracking
+- **Stirring (RPM)** - Mixing speed and stir bar health
+- **Pump Control** - Media, waste, and alt-media dosing automation
+- **AI Interpretation** - Claude-powered biological analysis of sensor data
 
 ## Current Status
 
@@ -53,4 +53,4 @@ Base URL: `http://oliveirapioreactor01.local`
 1. Ensure your Pioreactor cluster is running on the local network
 2. Clone this repo
 3. Open `src/Dashboard.jsx` in your React environment
-4. The dashboard currently uses snapshot data — swap to live API calls when deploying on the lab network
+4. The dashboard currently uses snapshot data - swap to live API calls when deploying on the lab network
