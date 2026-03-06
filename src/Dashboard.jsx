@@ -1586,8 +1586,7 @@ export default function App() {
             </span>
           </div>
           <div style={{ fontSize: 14, color: th.textMuted, marginTop: 4 }}>
-            {experiment ? experiment.experiment : "No experiment"}
-            <b>{lastFetch && ` · ${lastFetch.toLocaleTimeString()}`}</b>
+            <b>{lastFetch && ` ${lastFetch.toLocaleTimeString()}`}</b>
           </div>
         </div>
         <nav style={{ flex: 1, padding: "0 10px" }}>
