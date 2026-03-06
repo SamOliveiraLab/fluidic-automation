@@ -245,6 +245,43 @@ const usePioreactorData = () => {
     });
   };
 
+  // Start a job on all online workers
+  const startJob = async (jobName, options = {}) => {
+    if (!experiment) return { success: false, error: "No active experiment" };
+    const expEnc = encodeURIComponent(experiment.experiment);
+    const onlineReactors = reactors.filter(r => r.status === "online");
+    if (!onlineReactors.length) return { success: false, error: "No online bioreactors" };
+    
+    const results = await Promise.allSettled(
+      onlineReactors.map(r =>
+        fetch(`${API_BASE}/api/workers/${encodeURIComponent(r.id)}/jobs/run/job_name/${jobName}/experiments/${expEnc}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ options }),
+        })
+      )
+    );
+    const succeeded = results.filter(r => r.status === "fulfilled" && r.value?.ok).length;
+    // Refresh data after a short delay to pick up new readings
+    setTimeout(fetchAll, 3000);
+    return { success: succeeded > 0, started: succeeded, total: onlineReactors.length };
+  };
+
+  // Stop a job on all online workers
+  const stopJob = async (jobName) => {
+    if (!experiment) return;
+    const expEnc = encodeURIComponent(experiment.experiment);
+    const onlineReactors = reactors.filter(r => r.status === "online");
+    await Promise.allSettled(
+      onlineReactors.map(r =>
+        fetch(`${API_BASE}/api/workers/${encodeURIComponent(r.id)}/jobs/stop/job_name/${jobName}/experiments/${expEnc}`, {
+          method: "POST",
+        })
+      )
+    );
+    setTimeout(fetchAll, 2000);
+  };
+
   return {
     connected,
     loading,
@@ -258,6 +295,8 @@ const usePioreactorData = () => {
     addReactor,
     removeReactor,
     toggleStatus,
+    startJob,
+    stopJob,
     refresh: fetchAll,
   };
 };
@@ -578,6 +617,7 @@ const Chart = ({
   emptyTitle,
   emptySub,
   emptyAction,
+  onEmptyAction,
 }) => {
   const [filter, setFilter] = useState("both");
   const [showI, setShowI] = useState(false);
@@ -877,20 +917,25 @@ const Chart = ({
               {emptySub}
             </div>
             {emptyAction && (
-              <div
+              <button
+                onClick={onEmptyAction}
                 style={{
                   marginTop: 14,
                   display: "inline-block",
                   fontSize: 15,
                   fontWeight: 700,
-                  color: th.accent,
-                  background: th.accentLight,
-                  padding: "6px 14px",
-                  borderRadius: 7,
+                  color: onEmptyAction ? "#fff" : th.accent,
+                  background: onEmptyAction ? th.accent : th.accentLight,
+                  padding: onEmptyAction ? "10px 20px" : "6px 14px",
+                  borderRadius: onEmptyAction ? 10 : 7,
+                  border: "none",
+                  cursor: onEmptyAction ? "pointer" : "default",
+                  fontFamily: "inherit",
+                  transition: "opacity 0.2s",
                 }}
               >
                 {emptyAction}
-              </div>
+              </button>
             )}
           </div>
         )}
@@ -1309,10 +1354,21 @@ export default function App() {
     addReactor,
     removeReactor,
     toggleStatus,
+    startJob,
+    stopJob,
     refresh,
   } = usePioreactorData();
 
   const online = reactors.filter((r) => r.status === "online").length;
+  const [starting, setStarting] = useState({});
+
+  const handleStartJob = async (jobName, options = {}) => {
+    setStarting(prev => ({ ...prev, [jobName]: true }));
+    const result = await startJob(jobName, options);
+    setStarting(prev => ({ ...prev, [jobName]: false }));
+    return result;
+  };
+
   const nav = [
     { id: "overview", icon: "◉", label: "Overview" },
     { id: "reactors", icon: "⬢", label: "Bioreactors" },
@@ -1365,7 +1421,8 @@ export default function App() {
     emptySub: connected
       ? "Start OD Reading on your Pioreactors."
       : "Cannot reach Pioreactor API. Are you on the lab network?",
-    emptyAction: connected ? "Start OD Reading →" : "Check Connection",
+    emptyAction: connected ? (starting.od_reading ? "Starting..." : "Start OD Reading →") : "Check Connection",
+    onEmptyAction: connected ? () => handleStartJob("od_reading") : undefined,
   };
   const tempP = {
     title: "Temperature (°C)",
@@ -1389,8 +1446,9 @@ export default function App() {
       ? "Start Temperature Automation (Thermostat, e.g. 30°C). Works with water."
       : "Cannot reach Pioreactor API.",
     emptyAction: connected
-      ? "Start Temperature Automation →"
+      ? (starting.temperature_automation ? "Starting..." : "Start Temperature Automation →")
       : "Check Connection",
+    onEmptyAction: connected ? () => handleStartJob("temperature_automation", { automation_name: "thermostat", target_temperature: 30 }) : undefined,
   };
   const stirP = {
     title: "Stirring Rate (RPM)",
@@ -1413,7 +1471,8 @@ export default function App() {
     emptySub: connected
       ? "Stirring data appears when the Stirring activity is running."
       : "Cannot reach Pioreactor API.",
-    emptyAction: connected ? "Check Stirring Activity →" : "Check Connection",
+    emptyAction: connected ? (starting.stirring ? "Starting..." : "Start Stirring →") : "Check Connection",
+    onEmptyAction: connected ? () => handleStartJob("stirring", { target_rpm: "400" }) : undefined,
   };
   const grP = {
     title: "Growth Rate",
@@ -1439,7 +1498,8 @@ export default function App() {
     emptySub: connected
       ? "Requires Growth Rate activity AND organisms growing."
       : "Cannot reach Pioreactor API.",
-    emptyAction: connected ? "Needs Active Culture" : "Check Connection",
+    emptyAction: connected ? (starting.growth_rate_calculating ? "Starting..." : "Start Growth Rate →") : "Check Connection",
+    onEmptyAction: connected ? () => handleStartJob("growth_rate_calculating") : undefined,
   };
 
   const CS = ({ icon, title, desc }) => (
