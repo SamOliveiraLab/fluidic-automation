@@ -26,16 +26,8 @@ This dashboard connects to a network of [Pioreactor](https://pioreactor.com) bio
 | Pump control panel | 🔴 Needs hardware |
 | Dosing event log | 🔴 Needs hardware |
 | Smart alerts | 🔴 Future |
-| Digital twin | 🔴 Future (grant) |
 
-## Cluster Info
 
-| Unit | Role | Status |
-|------|------|--------|
-| oliveirapioreactor01 | Leader + Worker | ✅ Online |
-| oliveirapioreactor02 | Worker | ✅ Online |
-| oliveirapioreactor03 | Worker | 🟡 Needs lab fix |
-| oliveirapioreactor04 | Worker | ❌ Excluded |
 
 ## API Endpoints Used
 
@@ -62,20 +54,3 @@ Base URL: `http://oliveirapioreactor01.local`
 2. Clone this repo
 3. Open `src/Dashboard.jsx` in your React environment
 4. The dashboard currently uses snapshot data — swap to live API calls when deploying on the lab network
-
-## Team
-
-- **Bukola** — Dashboard development, fluidic automation, bioreactor networking
-- **Hamed** — PUMP paper collaboration, digital twin framework
-- **Tolu** — Hardware fabrication, pump setup
-- **Nona** — Biofilm experimental data
-
-## Related Work
-
-- PUMP paper (in progress with Hamed)
-- Digital Twin grant proposal (with Hamed + Aaron)
-- Bioreactor automation system for Oliveira Lab
-
----
-
-*Oliveira Lab — NCA&T*
