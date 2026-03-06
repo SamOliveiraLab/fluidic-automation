@@ -354,17 +354,34 @@ export default function PioreactorDashboard() {
         {/* Logo */}
         <div style={{ padding: "0 20px", marginBottom: 28 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{
-              width: 32, height: 32, borderRadius: 10,
-              background: `linear-gradient(135deg, ${th.accent}, ${th.accentSoft})`,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              color: "#fff", fontSize: 14, fontWeight: 800,
-            }}>P</div>
+            <svg width="32" height="32" viewBox="0 0 64 64" fill="none">
+              <line x1="32" y1="58" x2="32" y2="30" stroke={th.accent} strokeWidth="2"/>
+              <line x1="32" y1="30" x2="18" y2="14" stroke={th.accent} strokeWidth="2"/>
+              <line x1="32" y1="30" x2="46" y2="14" stroke={th.accent} strokeWidth="2"/>
+              <line x1="18" y1="14" x2="10" y2="8" stroke={th.accent} strokeWidth="1.5"/>
+              <line x1="18" y1="14" x2="24" y2="6" stroke={th.accent} strokeWidth="1.5"/>
+              <line x1="46" y1="14" x2="40" y2="6" stroke={th.accent} strokeWidth="1.5"/>
+              <line x1="46" y1="14" x2="54" y2="8" stroke={th.accent} strokeWidth="1.5"/>
+              <line x1="32" y1="40" x2="22" y2="34" stroke={th.accent} strokeWidth="1.5"/>
+              <line x1="32" y1="40" x2="42" y2="34" stroke={th.accent} strokeWidth="1.5"/>
+              <circle cx="32" cy="30" r="3" fill={th.accent}/>
+              <circle cx="18" cy="14" r="3" fill={th.text}/>
+              <circle cx="46" cy="14" r="3" fill={th.text}/>
+              <circle cx="10" cy="8" r="2.5" fill={th.accent} stroke={th.accent} strokeWidth="1"/>
+              <circle cx="24" cy="6" r="2.5" fill={th.text}/>
+              <circle cx="40" cy="6" r="2.5" fill={th.text}/>
+              <circle cx="54" cy="8" r="2.5" fill={th.accent} stroke={th.accent} strokeWidth="1"/>
+              <circle cx="22" cy="34" r="2" fill={th.text}/>
+              <circle cx="42" cy="34" r="2" fill={th.text}/>
+              <rect x="28" y="56" width="2" height="4" fill={th.accent}/>
+              <rect x="32" y="56" width="2" height="6" fill={th.accent}/>
+              <rect x="36" y="56" width="2" height="4" fill={th.accent}/>
+            </svg>
             <div>
-              <div style={{ fontSize: 15, fontWeight: 700, color: th.text, letterSpacing: "-0.01em" }}>
-                Pioreactor
+              <div style={{ fontSize: 14, fontWeight: 700, color: th.text, letterSpacing: "-0.01em" }}>
+                Oliveira Lab
               </div>
-              <div style={{ fontSize: 10, color: th.textMuted, fontWeight: 500 }}>Lab Dashboard</div>
+              <div style={{ fontSize: 10, color: th.textMuted, fontWeight: 500 }}>Bioreactor Dashboard</div>
             </div>
           </div>
         </div>
@@ -881,13 +898,7 @@ export default function PioreactorDashboard() {
               description="Configure thresholds for temperature, OD, and pump failures. Get notified when something needs attention. Define rules like 'if temp > 38°C, alert' or 'if OD drops 20% in 1 hour, alert'."
               th={th}
             />
-            <div style={{ marginTop: 14 }}>
-              <ComingSoonCard
-                icon="🔮" title="Digital Twin"
-                description="A computational model that mirrors your real bioreactor. It predicts what will happen next based on current trends and physics. This is the long-term grant and paper territory — the foundation (this dashboard) is already built."
-                th={th}
-              />
-            </div>
+
           </div>
         )}
 
@@ -899,7 +910,7 @@ export default function PioreactorDashboard() {
           fontSize: 11,
           color: th.textMuted,
         }}>
-          Oliveira Lab · Pioreactor Dashboard v0.1 · Built by Bukola · {new Date().getFullYear()}
+          Oliveira Lab · Bioreactor Dashboard v0.1 · Built by Bukola · {new Date().getFullYear()}
         </div>
       </div>
 
