@@ -7,9 +7,7 @@ import {
 /* ═══════════════════════════════════════════════════
    CONFIGURATION — Change this to your Leader's address
    ═══════════════════════════════════════════════════ */
-const API_BASE = window.location.hostname === "localhost" 
-  ? "http://oliveirapioreactor01.local"  // Dev: point to your Leader
-  : "";                                   // Prod: same-origin if hosted on Leader
+const API_BASE = ""; // Vite proxy handles routing to Pioreactor (see vite.config.js)
 
 const REFRESH_INTERVAL = 10000; // 10 seconds
 
