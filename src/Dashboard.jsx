@@ -70,7 +70,7 @@ const transformWorkers = (raw) => {
   if (!raw?.length) return [];
   return raw.map((w, i) => ({
     id: w.pioreactor_unit,
-    label: w.pioreactor_unit.replace(/pioreactor/i, "").replace(/oliveira/i, "Reactor ").replace(/worker/i, "Worker ").trim() || `Unit ${i + 1}`,
+    label: w.pioreactor_unit.replace(/pioreactor/i, "").replace(/oliveira/i, "Bioreactor ").replace(/worker/i, "Worker ").trim() || `Unit ${i + 1}`,
     role: i === 0 ? "Leader + Worker" : "Worker",
     status: w.is_active ? "online" : "offline",
     model: `${w.model_name?.replace("pioreactor_", "") || "unknown"} v${w.model_version || "?"}`,
@@ -282,7 +282,7 @@ const Chart=({th,title,subtitle,data,keys,colors,yFmt,csvCols,csvName,interpTitl
 };
 
 /* ─── INTERPRETATIONS ─── */
-const I_OD=`Both reactors are currently running with sterile water — no biological organisms are present.\n\nReactor 01 (OD ~0.206–0.208) shows a stable baseline with a notable downward drift beginning around 02:30 UTC, dropping from ~0.2075 to ~0.2058. This is not biological — it's almost certainly caused by ambient temperature cooling. As water cools, its refractive index changes slightly, which shifts the OD reading.\n\nReactor 02 (OD ~0.005) is reading near-zero, confirming very clear water with minimal light scatter.\n\nKey takeaway: Both sensors are working correctly. When you introduce a culture, you'll see OD begin climbing from these baselines. The temperature-driven drift tells you to run Temperature Automation for precise measurements.`;
+const I_OD=`Both bioreactors are currently running with sterile water — no biological organisms are present.\n\nBioreactor 01 (OD ~0.206–0.208) shows a stable baseline with a notable downward drift beginning around 02:30 UTC, dropping from ~0.2075 to ~0.2058. This is not biological — it's almost certainly caused by ambient temperature cooling. As water cools, its refractive index changes slightly, which shifts the OD reading.\n\nBioreactor 02 (OD ~0.005) is reading near-zero, confirming very clear water with minimal light scatter.\n\nKey takeaway: Both sensors are working correctly. When you introduce a culture, you'll see OD begin climbing from these baselines. The temperature-driven drift tells you to run Temperature Automation for precise measurements.`;
 const I_TEMP=`No temperature data is currently being collected.\n\nTo start: Pioreactor UI → Control all Pioreactors → Temperature Automation → Thermostat → 30°C.\n\nThis works with water. You'll see temperature climb from room temp to target, then hold steady. Temperature data is critical because it directly affects OD readings.`;
 const I_STIR=`No stirring data is currently being collected.\n\nStirring should be running if OD readings are active. Check that the Stirring activity is started in the Pioreactor UI.\n\nA sudden drop to 0 RPM means the stir bar detached — the culture stops being mixed, causing sedimentation and inaccurate OD readings.`;
 const I_GR=`No growth rate data is currently being collected.\n\nGrowth rate requires the Growth Rate activity AND actual organisms. With sterile water, it will always be zero.\n\nWith real organisms: expect yeast in YPD at 30°C to show a doubling time of ~90 minutes during exponential phase.`;
@@ -316,7 +316,7 @@ const AddReactorModal = ({open, onClose, onAdd, th}) => {
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             <span style={{fontSize:20}}>➕</span>
             <div>
-              <h3 style={{margin:0,fontSize:16,fontWeight:700,color:th.text}}>Add Reactor</h3>
+              <h3 style={{margin:0,fontSize:16,fontWeight:700,color:th.text}}>Add Bioreactor</h3>
               <p style={{margin:0,fontSize:11,color:th.textMuted}}>Step {step} of 2</p>
             </div>
           </div>
@@ -337,7 +337,7 @@ const AddReactorModal = ({open, onClose, onAdd, th}) => {
             </div>
             <div style={{marginBottom:16}}>
               <label style={{display:"block",fontSize:12,fontWeight:600,color:th.textSecondary,marginBottom:6}}>Display Label</label>
-              <input value={label} onChange={e=>setLabel(e.target.value)} placeholder="e.g. Reactor 05 (optional)" style={inp}/>
+              <input value={label} onChange={e=>setLabel(e.target.value)} placeholder="e.g. Bioreactor 05 (optional)" style={inp}/>
             </div>
             <div style={{marginBottom:20}}>
               <label style={{display:"block",fontSize:12,fontWeight:600,color:th.textSecondary,marginBottom:6}}>Model</label>
@@ -401,10 +401,10 @@ export default function App(){
   } = usePioreactorData();
 
   const online=reactors.filter(r=>r.status==="online").length;
-  const nav=[{id:"overview",icon:"◉",label:"Overview"},{id:"reactors",icon:"⬢",label:"Reactors"},{id:"od",icon:"◎",label:"OD Readings"},{id:"temp",icon:"◈",label:"Temperature"},{id:"stirring",icon:"↻",label:"Stirring"},{id:"growth",icon:"↗",label:"Growth Rate"},{id:"pumps",icon:"⬡",label:"Pump Control"},{id:"alerts",icon:"△",label:"Alerts"}];
+  const nav=[{id:"overview",icon:"◉",label:"Overview"},{id:"reactors",icon:"⬢",label:"Bioreactors"},{id:"od",icon:"◎",label:"OD Readings"},{id:"temp",icon:"◈",label:"Temperature"},{id:"stirring",icon:"↻",label:"Stirring"},{id:"growth",icon:"↗",label:"Growth Rate"},{id:"pumps",icon:"⬡",label:"Pump Control"},{id:"alerts",icon:"△",label:"Alerts"}];
 
   // Use dynamic keys from API data, or fallback
-  const odKeys = odData.keys.length ? odData.keys : [{key:"r01",label:"Reactor 01",s:"R-01"}];
+  const odKeys = odData.keys.length ? odData.keys : [{key:"r01",label:"Bioreactor 01",s:"R-01"}];
   const tempKeys = tempData.keys.length ? tempData.keys : odKeys;
   const stirKeys = stirData.keys.length ? stirData.keys : odKeys;
   const growthKeys = growthData.keys.length ? growthData.keys : odKeys;
@@ -465,10 +465,10 @@ export default function App(){
       {page==="reactors"&&<div style={{padding:"24px"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
           <div>
-            <p style={{margin:0,fontSize:13,color:th.textSecondary}}>{reactors.length} total · {online} online · {reactors.filter(r=>r.status==="offline").length} offline</p>
+            <p style={{margin:0,fontSize:13,color:th.textSecondary}}>{reactors.length} bioreactors · {online} online · {reactors.filter(r=>r.status==="offline").length} offline</p>
           </div>
           <button onClick={()=>setShowAddReactor(true)} style={{padding:"10px 20px",borderRadius:10,border:"none",background:th.accent,color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:8}}>
-            <span style={{fontSize:18,lineHeight:1}}>+</span> Add Reactor
+            <span style={{fontSize:18,lineHeight:1}}>+</span> Add Bioreactor
           </button>
         </div>
 
@@ -509,12 +509,12 @@ export default function App(){
 
         {/* How to add guide */}
         <div style={{marginTop:24,padding:"20px 24px",background:th.surface,border:`1px solid ${th.border}`,borderRadius:14,boxShadow:th.shadow}}>
-          <h3 style={{margin:"0 0 14px",fontSize:15,fontWeight:700,color:th.text}}>How to add a new Pioreactor</h3>
+          <h3 style={{margin:"0 0 14px",fontSize:15,fontWeight:700,color:th.text}}>How to add a new bioreactor</h3>
           <div style={{fontSize:13,color:th.textSecondary,lineHeight:1.8}}>
             <p style={{margin:"0 0 10px"}}><strong style={{color:th.text}}>1.</strong> Flash SD card with <strong>Worker</strong> image using Raspberry Pi Imager — give it a unique hostname</p>
             <p style={{margin:"0 0 10px"}}><strong style={{color:th.text}}>2.</strong> Set the same Wi-Fi network as your Leader (<code style={{background:th.bgAlt,padding:"2px 8px",borderRadius:5,fontFamily:"'JetBrains Mono',monospace",fontSize:11,color:th.accent}}>oliveirapioreactor01</code>)</p>
             <p style={{margin:"0 0 10px"}}><strong style={{color:th.text}}>3.</strong> Power it on and wait for the blue LED blink</p>
-            <p style={{margin:"0 0 10px"}}><strong style={{color:th.text}}>4.</strong> Click <strong>"+ Add Reactor"</strong> above, or add via terminal: <code style={{background:th.bgAlt,padding:"2px 8px",borderRadius:5,fontFamily:"'JetBrains Mono',monospace",fontSize:11,color:th.accent}}>pio workers add hostname</code></p>
+            <p style={{margin:"0 0 10px"}}><strong style={{color:th.text}}>4.</strong> Click <strong>"+ Add Bioreactor"</strong> above, or add via terminal: <code style={{background:th.bgAlt,padding:"2px 8px",borderRadius:5,fontFamily:"'JetBrains Mono',monospace",fontSize:11,color:th.accent}}>pio workers add hostname</code></p>
             <p style={{margin:0}}><strong style={{color:th.text}}>5.</strong> Run the Self-test from the Pioreactor web UI to verify all sensors are working</p>
           </div>
         </div>
