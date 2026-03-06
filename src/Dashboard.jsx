@@ -36,7 +36,7 @@ const TEMP_DATA = [];
 const STIRRING_DATA = [];
 const GROWTH_DATA = [];
 
-const REACTORS = [
+const INITIAL_REACTORS = [
   { id: "oliveirapioreactor01", label: "Reactor 01", role: "Leader + Worker", status: "online", model: "40mL v1.5" },
   { id: "oliveirapioreactor02", label: "Reactor 02", role: "Worker", status: "online", model: "40mL v1.5" },
   { id: "oliveirapioreactor03", label: "Reactor 03", role: "Worker", status: "warning", model: "40mL v1.5" },
@@ -159,11 +159,119 @@ const I_GR=`No growth rate data is currently being collected.\n\nGrowth rate req
 
 const K=[{key:"r01",label:"Reactor 01",s:"R-01"},{key:"r02",label:"Reactor 02",s:"R-02"}];
 
+/* ─── ADD REACTOR MODAL ─── */
+const AddReactorModal = ({open, onClose, onAdd, th}) => {
+  const [hostname, setHostname] = useState("");
+  const [label, setLabel] = useState("");
+  const [model, setModel] = useState("40mL v1.5");
+  const [step, setStep] = useState(1);
+
+  const reset = () => { setHostname(""); setLabel(""); setModel("40mL v1.5"); setStep(1); };
+  const handleAdd = () => {
+    if (!hostname.trim()) return;
+    onAdd({
+      id: hostname.trim(),
+      label: label.trim() || hostname.trim(),
+      role: "Worker",
+      status: "online",
+      model: model,
+    });
+    reset();
+    onClose();
+  };
+
+  if (!open) return null;
+  const inp = {width:"100%",padding:"10px 14px",borderRadius:9,border:`1px solid ${th.border}`,background:th.bgAlt,color:th.text,fontSize:13,fontFamily:"inherit",outline:"none"};
+
+  return (
+    <div onClick={()=>{reset();onClose()}} style={{position:"fixed",inset:0,zIndex:1000,background:th.modalOverlay,display:"flex",alignItems:"center",justifyContent:"center",padding:20,backdropFilter:"blur(4px)"}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:th.surface,borderRadius:18,maxWidth:480,width:"100%",border:`1px solid ${th.border}`,boxShadow:th.shadowHover,overflow:"hidden"}}>
+        <div style={{padding:"20px 24px",borderBottom:`1px solid ${th.borderLight}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <span style={{fontSize:20}}>➕</span>
+            <div>
+              <h3 style={{margin:0,fontSize:16,fontWeight:700,color:th.text}}>Add Reactor</h3>
+              <p style={{margin:0,fontSize:11,color:th.textMuted}}>Step {step} of 2</p>
+            </div>
+          </div>
+          <button onClick={()=>{reset();onClose()}} style={{background:th.bgAlt,border:`1px solid ${th.border}`,borderRadius:8,width:32,height:32,cursor:"pointer",fontSize:16,color:th.textSecondary,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+        </div>
+
+        {step === 1 && (
+          <div style={{padding:"24px"}}>
+            <div style={{marginBottom:20,padding:"14px 16px",background:th.accentLight,borderRadius:10,border:`1px solid ${th.accent}20`}}>
+              <p style={{margin:0,fontSize:12,color:th.accent,lineHeight:1.6}}>
+                <strong>Before adding here:</strong> Make sure the Pioreactor has Worker software installed and is connected to the same Wi-Fi network as your Leader.
+              </p>
+            </div>
+            <div style={{marginBottom:16}}>
+              <label style={{display:"block",fontSize:12,fontWeight:600,color:th.textSecondary,marginBottom:6}}>Hostname *</label>
+              <input value={hostname} onChange={e=>setHostname(e.target.value)} placeholder="e.g. worker05 or oliveirapioreactor05" style={inp}/>
+              <p style={{margin:"6px 0 0",fontSize:11,color:th.textMuted}}>The name you gave it during SD card setup in Raspberry Pi Imager</p>
+            </div>
+            <div style={{marginBottom:16}}>
+              <label style={{display:"block",fontSize:12,fontWeight:600,color:th.textSecondary,marginBottom:6}}>Display Label</label>
+              <input value={label} onChange={e=>setLabel(e.target.value)} placeholder="e.g. Reactor 05 (optional)" style={inp}/>
+            </div>
+            <div style={{marginBottom:20}}>
+              <label style={{display:"block",fontSize:12,fontWeight:600,color:th.textSecondary,marginBottom:6}}>Model</label>
+              <div style={{display:"flex",gap:8}}>
+                {["20mL v1.1","40mL v1.5"].map(m=>(
+                  <button key={m} onClick={()=>setModel(m)} style={{flex:1,padding:"10px",borderRadius:8,border:`1.5px solid ${model===m?th.accent:th.border}`,background:model===m?th.accentLight:"transparent",color:model===m?th.accent:th.textSecondary,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>{m}</button>
+                ))}
+              </div>
+            </div>
+            <button onClick={()=>{if(hostname.trim()) setStep(2)}} disabled={!hostname.trim()} style={{width:"100%",padding:"12px",borderRadius:10,border:"none",background:hostname.trim()?th.accent:th.border,color:hostname.trim()?"#fff":th.textMuted,fontSize:14,fontWeight:700,cursor:hostname.trim()?"pointer":"default",fontFamily:"inherit"}}>
+              Next →
+            </button>
+          </div>
+        )}
+
+        {step === 2 && (
+          <div style={{padding:"24px"}}>
+            <div style={{marginBottom:24}}>
+              <div style={{fontSize:12,fontWeight:600,color:th.textMuted,marginBottom:12,textTransform:"uppercase",letterSpacing:"0.08em"}}>Confirm Details</div>
+              <div style={{background:th.bgAlt,borderRadius:12,padding:"16px 18px",border:`1px solid ${th.border}`}}>
+                {[
+                  {k:"Hostname",v:hostname},
+                  {k:"Label",v:label || hostname},
+                  {k:"Role",v:"Worker"},
+                  {k:"Model",v:model},
+                ].map((row,i)=>(
+                  <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:i<3?`1px solid ${th.borderLight}`:"none"}}>
+                    <span style={{fontSize:12,color:th.textMuted}}>{row.k}</span>
+                    <span style={{fontSize:12,fontWeight:600,color:th.text,fontFamily:"'JetBrains Mono',monospace"}}>{row.v}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div style={{marginBottom:20,padding:"14px 16px",background:th.warningBg,borderRadius:10,border:`1px solid ${th.warning}20`}}>
+              <p style={{margin:0,fontSize:12,color:th.warning,lineHeight:1.6}}>
+                <strong>On the lab network:</strong> This will run <code style={{fontSize:11,background:`${th.warning}15`,padding:"1px 6px",borderRadius:4}}>pio workers add {hostname}</code> on the Leader. Make sure the Pioreactor is powered on.
+              </p>
+            </div>
+            <div style={{display:"flex",gap:10}}>
+              <button onClick={()=>setStep(1)} style={{flex:1,padding:"12px",borderRadius:10,border:`1px solid ${th.border}`,background:"transparent",color:th.textSecondary,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>← Back</button>
+              <button onClick={handleAdd} style={{flex:2,padding:"12px",borderRadius:10,border:"none",background:th.accent,color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Add to Cluster</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+};
+
 /* ─── MAIN ─── */
 export default function App(){
   const[mode,setMode]=useState("light");const[showS,setShowS]=useState(false);const[sidebar,setSidebar]=useState(false);const[page,setPage]=useState("overview");
-  const th=themes[mode];const online=REACTORS.filter(r=>r.status==="online").length;
-  const nav=[{id:"overview",icon:"◉",label:"Overview"},{id:"od",icon:"◎",label:"OD Readings"},{id:"temp",icon:"◈",label:"Temperature"},{id:"stirring",icon:"↻",label:"Stirring"},{id:"growth",icon:"↗",label:"Growth Rate"},{id:"pumps",icon:"⬡",label:"Pump Control"},{id:"alerts",icon:"△",label:"Alerts"}];
+  const[reactors,setReactors]=useState(INITIAL_REACTORS);
+  const[showAddReactor,setShowAddReactor]=useState(false);
+  const th=themes[mode];const online=reactors.filter(r=>r.status==="online").length;
+  const nav=[{id:"overview",icon:"◉",label:"Overview"},{id:"reactors",icon:"⬢",label:"Reactors"},{id:"od",icon:"◎",label:"OD Readings"},{id:"temp",icon:"◈",label:"Temperature"},{id:"stirring",icon:"↻",label:"Stirring"},{id:"growth",icon:"↗",label:"Growth Rate"},{id:"pumps",icon:"⬡",label:"Pump Control"},{id:"alerts",icon:"△",label:"Alerts"}];
+
+  const addReactor = (r) => setReactors(prev => [...prev, r]);
+  const removeReactor = (id) => setReactors(prev => prev.filter(r => r.id !== id));
+  const toggleStatus = (id) => setReactors(prev => prev.map(r => r.id === id ? {...r, status: r.status === "offline" ? "online" : "offline"} : r));
 
   const odP={title:"Optical Density (OD)",subtitle:`90° scatter · ${OD_DATA.length} readings · ~4 hours`,data:OD_DATA,keys:K,colors:[th.chartLine1,th.chartLine2],yFmt:v=>v<0.01?v.toFixed(4):v.toFixed(3),csvCols:[{key:"t",label:"Time"},{key:"r01",label:"Reactor_01_OD"},{key:"r02",label:"Reactor_02_OD"}],csvName:"od_readings",interpTitle:"OD Interpretation",interpText:I_OD,emptyIcon:"◎",emptyTitle:"No OD data yet",emptySub:"Start OD Reading on your Pioreactors.",emptyAction:"Start OD Reading →"};
   const tempP={title:"Temperature (°C)",subtitle:"Thermostat control",data:TEMP_DATA,keys:K,colors:[th.chartLine1,th.chartLine2],yFmt:v=>v.toFixed(1)+"°",csvCols:[{key:"t",label:"Time"},{key:"r01",label:"R01_Temp"},{key:"r02",label:"R02_Temp"}],csvName:"temperature",interpTitle:"Temperature Interpretation",interpText:I_TEMP,emptyIcon:"🌡️",emptyTitle:"No temperature data",emptySub:"Start Temperature Automation (Thermostat, e.g. 30°C). Works with water.",emptyAction:"Start Temperature Automation →"};
@@ -182,7 +290,7 @@ export default function App(){
     {/* SIDEBAR */}
     <div style={{position:"fixed",top:0,left:0,bottom:0,width:220,zIndex:100,background:th.surface,borderRight:`1px solid ${th.border}`,padding:"20px 0",display:"flex",flexDirection:"column",transform:sidebar?"translateX(0)":(typeof window!=="undefined"&&window.innerWidth<768?"translateX(-100%)":"translateX(0)"),transition:"transform 0.3s ease",boxShadow:sidebar?th.shadowHover:"none"}}>
       <div style={{padding:"0 20px",marginBottom:28}}><div style={{display:"flex",alignItems:"center",gap:10}}><img src={`data:image/png;base64,${LOGO}`} alt="Oliveira Lab" style={{width:50,height:50,objectFit:"contain"}}/><div><div style={{fontSize:14,fontWeight:700,color:th.text}}>Oliveira Lab</div><div style={{fontSize:10,color:th.textMuted,fontWeight:500}}>Bioreactor Dashboard</div></div></div></div>
-      <div style={{margin:"0 16px 20px",padding:"10px 14px",background:th.successBg,borderRadius:10,border:`1px solid ${th.success}25`}}><div style={{display:"flex",alignItems:"center",gap:6}}><Dot s="online" th={th}/><span style={{fontSize:12,fontWeight:600,color:th.success}}>{online} of {REACTORS.length} Online</span></div><div style={{fontSize:10,color:th.textMuted,marginTop:4}}>Demo experiment</div></div>
+      <div style={{margin:"0 16px 20px",padding:"10px 14px",background:th.successBg,borderRadius:10,border:`1px solid ${th.success}25`}}><div style={{display:"flex",alignItems:"center",gap:6}}><Dot s="online" th={th}/><span style={{fontSize:12,fontWeight:600,color:th.success}}>{online} of {reactors.length} Online</span></div><div style={{fontSize:10,color:th.textMuted,marginTop:4}}>Demo experiment</div></div>
       <nav style={{flex:1,padding:"0 10px"}}>{nav.map(n=><button key={n.id} onClick={()=>{setPage(n.id);setSidebar(false)}} style={{display:"flex",alignItems:"center",gap:10,width:"100%",padding:"10px 14px",background:page===n.id?th.accentLight:"transparent",border:"none",borderRadius:9,cursor:"pointer",marginBottom:2,color:page===n.id?th.accent:th.textSecondary,fontWeight:page===n.id?600:500,fontSize:13,textAlign:"left",fontFamily:"inherit"}}><span style={{fontSize:14,width:20,textAlign:"center",opacity:0.7}}>{n.icon}</span>{n.label}</button>)}</nav>
       <div style={{padding:"0 10px",borderTop:`1px solid ${th.borderLight}`,paddingTop:16}}>
         <button onClick={()=>setShowS(!showS)} style={{display:"flex",alignItems:"center",gap:10,width:"100%",padding:"10px 14px",background:showS?th.bgAlt:"transparent",border:"none",borderRadius:9,cursor:"pointer",color:th.textSecondary,fontSize:13,fontWeight:500,textAlign:"left",fontFamily:"inherit"}}><span style={{fontSize:14,width:20,textAlign:"center",opacity:0.7}}>⚙</span>Settings</button>
@@ -201,13 +309,72 @@ export default function App(){
       </div>
 
       {page==="overview"&&<div style={{padding:"24px"}}>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))",gap:14,marginBottom:28}}>{REACTORS.map(r=><div key={r.id} style={{background:th.surface,border:`1px solid ${th.border}`,borderRadius:14,padding:"18px 20px",boxShadow:th.shadow,position:"relative",overflow:"hidden"}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))",gap:14,marginBottom:28}}>{reactors.map(r=><div key={r.id} style={{background:th.surface,border:`1px solid ${th.border}`,borderRadius:14,padding:"18px 20px",boxShadow:th.shadow,position:"relative",overflow:"hidden"}}>
           {r.status==="offline"&&<div style={{position:"absolute",inset:0,background:`${th.bg}90`,zIndex:2,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:14,backdropFilter:"blur(2px)"}}><span style={{fontSize:12,fontWeight:700,color:th.danger,background:th.dangerBg,padding:"6px 14px",borderRadius:8}}>EXCLUDED</span></div>}
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}><div><div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}><Dot s={r.status} th={th}/><span style={{fontSize:14,fontWeight:700,color:th.text}}>{r.label}</span></div><span style={{fontSize:10,fontWeight:600,color:th.accent,background:th.accentLight,padding:"2px 8px",borderRadius:5}}>{r.role}</span></div><span style={{fontSize:10,color:th.textMuted,fontWeight:500,background:th.bgAlt,padding:"3px 8px",borderRadius:6}}>{r.model}</span></div>
           <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:10,color:th.textSecondary}}>{r.id}</div>
           {r.status==="warning"&&<div style={{marginTop:12,padding:"8px 10px",borderRadius:8,background:th.warningBg,border:`1px solid ${th.warning}20`,fontSize:11,color:th.warning,fontWeight:500}}>⚠ Photodiode cables swapped + stir bar check</div>}
         </div>)}</div>
         <Chart th={th} {...odP}/><Chart th={th} {...tempP}/><Chart th={th} {...stirP}/><Chart th={th} {...grP}/>
+      </div>}
+
+      {/* REACTORS MANAGEMENT PAGE */}
+      {page==="reactors"&&<div style={{padding:"24px"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+          <div>
+            <p style={{margin:0,fontSize:13,color:th.textSecondary}}>{reactors.length} total · {online} online · {reactors.filter(r=>r.status==="offline").length} offline</p>
+          </div>
+          <button onClick={()=>setShowAddReactor(true)} style={{padding:"10px 20px",borderRadius:10,border:"none",background:th.accent,color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:8}}>
+            <span style={{fontSize:18,lineHeight:1}}>+</span> Add Reactor
+          </button>
+        </div>
+
+        <div style={{display:"flex",flexDirection:"column",gap:12}}>
+          {reactors.map(r=>(
+            <div key={r.id} style={{background:th.surface,border:`1px solid ${th.border}`,borderRadius:14,padding:"20px 24px",boxShadow:th.shadow,display:"flex",alignItems:"center",gap:16,flexWrap:"wrap"}}>
+              <div style={{flex:"0 0 auto"}}><Dot s={r.status} th={th}/></div>
+              <div style={{flex:1,minWidth:160}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+                  <span style={{fontSize:15,fontWeight:700,color:th.text}}>{r.label}</span>
+                  <span style={{fontSize:10,fontWeight:600,color:th.accent,background:th.accentLight,padding:"2px 8px",borderRadius:5}}>{r.role}</span>
+                </div>
+                <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:11,color:th.textMuted}}>{r.id}</div>
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                <span style={{fontSize:11,color:th.textMuted,background:th.bgAlt,padding:"4px 10px",borderRadius:6,fontWeight:500}}>{r.model}</span>
+                <span style={{fontSize:11,fontWeight:600,padding:"4px 10px",borderRadius:6,
+                  color:r.status==="online"?th.success:r.status==="warning"?th.warning:th.danger,
+                  background:r.status==="online"?th.successBg:r.status==="warning"?th.warningBg:th.dangerBg,
+                }}>{r.status==="online"?"Online":r.status==="warning"?"Needs Fix":"Offline"}</span>
+              </div>
+              <div style={{display:"flex",gap:6}}>
+                {r.role!=="Leader + Worker"&&(
+                  <button onClick={()=>toggleStatus(r.id)} style={{padding:"6px 12px",borderRadius:7,border:`1px solid ${th.border}`,background:th.bgAlt,color:th.textSecondary,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+                    {r.status==="offline"?"Enable":"Disable"}
+                  </button>
+                )}
+                {r.role!=="Leader + Worker"&&(
+                  <button onClick={()=>{if(confirm(`Remove ${r.label} from the cluster?`))removeReactor(r.id)}} style={{padding:"6px 12px",borderRadius:7,border:`1px solid ${th.danger}30`,background:th.dangerBg,color:th.danger,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+                    Remove
+                  </button>
+                )}
+              </div>
+              {r.status==="warning"&&<div style={{width:"100%",padding:"8px 12px",borderRadius:8,background:th.warningBg,border:`1px solid ${th.warning}20`,fontSize:11,color:th.warning,fontWeight:500,marginTop:4}}>⚠ Photodiode cables swapped + stir bar check needed in lab</div>}
+            </div>
+          ))}
+        </div>
+
+        {/* How to add guide */}
+        <div style={{marginTop:24,padding:"20px 24px",background:th.surface,border:`1px solid ${th.border}`,borderRadius:14,boxShadow:th.shadow}}>
+          <h3 style={{margin:"0 0 14px",fontSize:15,fontWeight:700,color:th.text}}>How to add a new Pioreactor</h3>
+          <div style={{fontSize:13,color:th.textSecondary,lineHeight:1.8}}>
+            <p style={{margin:"0 0 10px"}}><strong style={{color:th.text}}>1.</strong> Flash SD card with <strong>Worker</strong> image using Raspberry Pi Imager — give it a unique hostname</p>
+            <p style={{margin:"0 0 10px"}}><strong style={{color:th.text}}>2.</strong> Set the same Wi-Fi network as your Leader (<code style={{background:th.bgAlt,padding:"2px 8px",borderRadius:5,fontFamily:"'JetBrains Mono',monospace",fontSize:11,color:th.accent}}>oliveirapioreactor01</code>)</p>
+            <p style={{margin:"0 0 10px"}}><strong style={{color:th.text}}>3.</strong> Power it on and wait for the blue LED blink</p>
+            <p style={{margin:"0 0 10px"}}><strong style={{color:th.text}}>4.</strong> Click <strong>"+ Add Reactor"</strong> above, or add via terminal: <code style={{background:th.bgAlt,padding:"2px 8px",borderRadius:5,fontFamily:"'JetBrains Mono',monospace",fontSize:11,color:th.accent}}>pio workers add hostname</code></p>
+            <p style={{margin:0}}><strong style={{color:th.text}}>5.</strong> Run the Self-test from the Pioreactor web UI to verify all sensors are working</p>
+          </div>
+        </div>
       </div>}
 
       {page==="od"&&<div style={{padding:"24px"}}><Chart th={th} {...odP}/></div>}
@@ -237,6 +404,7 @@ export default function App(){
 
       <div style={{padding:"20px 24px",borderTop:`1px solid ${th.borderLight}`,textAlign:"center",fontSize:11,color:th.textMuted}}>Oliveira Lab · Bioreactor Dashboard v0.1 · Built by Bukola · {new Date().getFullYear()}</div>
     </div>
+    <AddReactorModal open={showAddReactor} onClose={()=>setShowAddReactor(false)} onAdd={addReactor} th={th}/>
     <style>{`@keyframes spin{to{transform:rotate(360deg)}}*{box-sizing:border-box;margin:0}::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:${th.border};border-radius:3px}`}</style>
   </div>)
 }
