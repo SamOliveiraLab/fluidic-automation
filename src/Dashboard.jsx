@@ -4,44 +4,176 @@ import {
   ResponsiveContainer,
 } from "recharts";
 
-/* ─── REAL DATA ─── */
-const OD_DATA = [
-  {t:"23:48",r01:0.2069,r02:0.00526},{t:"23:53",r01:0.2069,r02:0.00527},
-  {t:"23:58",r01:0.2069,r02:0.00527},{t:"00:03",r01:0.2071,r02:0.00528},
-  {t:"00:08",r01:0.2071,r02:0.00527},{t:"00:13",r01:0.2071,r02:0.00525},
-  {t:"00:18",r01:0.2072,r02:0.00525},{t:"00:23",r01:0.2072,r02:0.00525},
-  {t:"00:28",r01:0.2073,r02:0.00526},{t:"00:33",r01:0.2073,r02:0.00526},
-  {t:"00:38",r01:0.2073,r02:0.00525},{t:"00:43",r01:0.2073,r02:0.00527},
-  {t:"00:48",r01:0.2073,r02:0.00526},{t:"00:53",r01:0.2073,r02:0.00527},
-  {t:"00:58",r01:0.2074,r02:0.00527},{t:"01:03",r01:0.2075,r02:0.00526},
-  {t:"01:08",r01:0.2075,r02:0.00527},{t:"01:13",r01:0.2074,r02:0.00527},
-  {t:"01:18",r01:0.2075,r02:0.00528},{t:"01:23",r01:0.2075,r02:0.00525},
-  {t:"01:28",r01:0.2076,r02:0.00527},{t:"01:33",r01:0.2075,r02:0.00526},
-  {t:"01:38",r01:0.2075,r02:0.00525},{t:"01:43",r01:0.2074,r02:0.00527},
-  {t:"01:48",r01:0.2073,r02:0.00524},{t:"01:53",r01:0.2073,r02:0.00526},
-  {t:"01:58",r01:0.2074,r02:0.00526},{t:"02:03",r01:0.2074,r02:0.00525},
-  {t:"02:08",r01:0.2074,r02:0.00525},{t:"02:13",r01:0.2073,r02:0.00525},
-  {t:"02:18",r01:0.2073,r02:0.00525},{t:"02:23",r01:0.2072,r02:0.00524},
-  {t:"02:28",r01:0.2072,r02:0.00524},{t:"02:33",r01:0.2070,r02:0.00524},
-  {t:"02:38",r01:0.2062,r02:0.00525},{t:"02:43",r01:0.2061,r02:0.00524},
-  {t:"02:48",r01:0.2061,r02:0.00525},{t:"02:53",r01:0.2061,r02:0.00524},
-  {t:"02:58",r01:0.2061,r02:0.00523},{t:"03:03",r01:0.2061,r02:0.00524},
-  {t:"03:08",r01:0.2061,r02:0.00525},{t:"03:13",r01:0.2061,r02:0.00526},
-  {t:"03:18",r01:0.2060,r02:0.00525},{t:"03:23",r01:0.2060,r02:0.00526},
-  {t:"03:28",r01:0.2056,r02:0.00525},{t:"03:33",r01:0.2059,r02:0.00525},
-  {t:"03:38",r01:0.2059,r02:0.00526},{t:"03:43",r01:0.2059,r02:0.00526},
-  {t:"03:48",r01:0.2058,r02:0.00525},
-];
-const TEMP_DATA = [];
-const STIRRING_DATA = [];
-const GROWTH_DATA = [];
+/* ═══════════════════════════════════════════════════
+   CONFIGURATION — Change this to your Leader's address
+   ═══════════════════════════════════════════════════ */
+const API_BASE = window.location.hostname === "localhost" 
+  ? "http://oliveirapioreactor01.local"  // Dev: point to your Leader
+  : "";                                   // Prod: same-origin if hosted on Leader
 
-const INITIAL_REACTORS = [
-  { id: "oliveirapioreactor01", label: "Reactor 01", role: "Leader + Worker", status: "online", model: "40mL v1.5" },
-  { id: "oliveirapioreactor02", label: "Reactor 02", role: "Worker", status: "online", model: "40mL v1.5" },
-  { id: "oliveirapioreactor03", label: "Reactor 03", role: "Worker", status: "warning", model: "40mL v1.5" },
-  { id: "oliveirapioreactor04", label: "Reactor 04", role: "Worker", status: "offline", model: "40mL v1.5" },
-];
+const REFRESH_INTERVAL = 10000; // 10 seconds
+
+/* ═══════════════════════════════════════════════════
+   API HELPERS
+   ═══════════════════════════════════════════════════ */
+const api = async (path) => {
+  try {
+    const res = await fetch(`${API_BASE}${path}`);
+    if (!res.ok) throw new Error(res.statusText);
+    return await res.json();
+  } catch (e) {
+    console.warn(`API call failed: ${path}`, e.message);
+    return null;
+  }
+};
+
+// Transform Pioreactor time_series response → chart-friendly format
+// API returns: { series: ["unit1-ch","unit2-ch"], data: [[{x,y},...],[{x,y},...]] }
+// We need:    [{ t:"HH:MM", r01: value, r02: value }, ...]
+const transformTimeSeries = (raw, workers) => {
+  if (!raw?.series?.length || !raw?.data?.length) return { data: [], keys: [] };
+  
+  // Build key mapping: series name → short key like "r01", "r02"
+  const keyMap = {};
+  const keys = [];
+  raw.series.forEach((seriesName, i) => {
+    // seriesName is like "oliveirapioreactor01-2" — extract the unit name
+    const unitName = seriesName.replace(/-\d+$/, "");
+    const workerIdx = workers.findIndex(w => w.id === unitName);
+    const shortKey = `r${String(workerIdx + 1).padStart(2, "0")}`;
+    const label = workers[workerIdx]?.label || unitName;
+    keyMap[i] = shortKey;
+    keys.push({ key: shortKey, label, s: `R-${String(workerIdx + 1).padStart(2, "0")}` });
+  });
+
+  // Merge all series into one array keyed by timestamp
+  const timeMap = {};
+  raw.data.forEach((seriesData, seriesIdx) => {
+    const key = keyMap[seriesIdx];
+    seriesData.forEach(point => {
+      const timeStr = new Date(point.x).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+      if (!timeMap[timeStr]) timeMap[timeStr] = { t: timeStr };
+      timeMap[timeStr][key] = point.y;
+    });
+  });
+
+  // Sort by time and sample down if too many points (keep ~200 max for performance)
+  let data = Object.values(timeMap).sort((a, b) => a.t.localeCompare(b.t));
+  if (data.length > 200) {
+    const step = Math.ceil(data.length / 200);
+    data = data.filter((_, i) => i % step === 0);
+  }
+
+  return { data, keys };
+};
+
+// Transform /api/workers response → reactor card format
+const transformWorkers = (raw) => {
+  if (!raw?.length) return [];
+  return raw.map((w, i) => ({
+    id: w.pioreactor_unit,
+    label: w.pioreactor_unit.replace(/pioreactor/i, "").replace(/oliveira/i, "Reactor ").replace(/worker/i, "Worker ").trim() || `Unit ${i + 1}`,
+    role: i === 0 ? "Leader + Worker" : "Worker",
+    status: w.is_active ? "online" : "offline",
+    model: `${w.model_name?.replace("pioreactor_", "") || "unknown"} v${w.model_version || "?"}`,
+    addedAt: w.added_at,
+  }));
+};
+
+/* ═══════════════════════════════════════════════════
+   CUSTOM HOOK: usePioreactorData
+   Fetches all data from the API and refreshes periodically
+   ═══════════════════════════════════════════════════ */
+const usePioreactorData = () => {
+  const [connected, setConnected] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [experiment, setExperiment] = useState(null);
+  const [reactors, setReactors] = useState([]);
+  const [odData, setOdData] = useState({ data: [], keys: [] });
+  const [tempData, setTempData] = useState({ data: [], keys: [] });
+  const [stirData, setStirData] = useState({ data: [], keys: [] });
+  const [growthData, setGrowthData] = useState({ data: [], keys: [] });
+  const [lastFetch, setLastFetch] = useState(null);
+
+  const fetchAll = useCallback(async () => {
+    // 1. Fetch workers
+    const workersRaw = await api("/api/workers");
+    if (!workersRaw) { setConnected(false); setLoading(false); return; }
+    
+    setConnected(true);
+    const workers = transformWorkers(workersRaw);
+    setReactors(workers);
+
+    // 2. Fetch latest experiment
+    const expsRaw = await api("/api/experiments");
+    if (!expsRaw?.length) { setLoading(false); return; }
+    const latestExp = expsRaw[expsRaw.length - 1];
+    setExperiment(latestExp);
+    const expName = encodeURIComponent(latestExp.experiment);
+
+    // 3. Fetch all time series in parallel
+    const [odRaw, tempRaw, stirRaw, growthRaw] = await Promise.all([
+      api(`/api/experiments/${expName}/time_series/od_readings?filter_mod_N=1`),
+      api(`/api/experiments/${expName}/time_series/temperature_readings?filter_mod_N=1`),
+      api(`/api/experiments/${expName}/time_series/stirring_rates?filter_mod_N=1`),
+      api(`/api/experiments/${expName}/time_series/growth_rates?filter_mod_N=1`),
+    ]);
+
+    setOdData(transformTimeSeries(odRaw, workers));
+    setTempData(transformTimeSeries(tempRaw, workers));
+    setStirData(transformTimeSeries(stirRaw, workers));
+    setGrowthData(transformTimeSeries(growthRaw, workers));
+    setLastFetch(new Date());
+    setLoading(false);
+  }, []);
+
+  // Initial fetch + interval
+  useEffect(() => {
+    fetchAll();
+    const id = setInterval(fetchAll, REFRESH_INTERVAL);
+    return () => clearInterval(id);
+  }, [fetchAll]);
+
+  // Add reactor via API
+  const addReactor = async (hostname) => {
+    const res = await api(`/api/workers/${encodeURIComponent(hostname)}`);
+    // Also try POST if available
+    if (!res) {
+      // Optimistic local add — will be confirmed on next refresh
+      setReactors(prev => [...prev, {
+        id: hostname, label: hostname, role: "Worker",
+        status: "online", model: "unknown", addedAt: new Date().toISOString(),
+      }]);
+    }
+    fetchAll(); // refresh
+  };
+
+  // Remove reactor via API
+  const removeReactor = async (id) => {
+    await fetch(`${API_BASE}/api/workers/${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => {});
+    setReactors(prev => prev.filter(r => r.id !== id));
+    fetchAll();
+  };
+
+  // Toggle active status
+  const toggleStatus = async (id) => {
+    const reactor = reactors.find(r => r.id === id);
+    if (!reactor) return;
+    const newActive = reactor.status === "offline" ? 1 : 0;
+    await fetch(`${API_BASE}/api/workers/${encodeURIComponent(id)}/is_active`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ is_active: newActive }),
+    }).catch(() => {});
+    setReactors(prev => prev.map(r => r.id === id ? { ...r, status: newActive ? "online" : "offline" } : r));
+  };
+
+  return {
+    connected, loading, experiment, reactors, lastFetch,
+    odData, tempData, stirData, growthData,
+    addReactor, removeReactor, toggleStatus, refresh: fetchAll,
+  };
+};
 
 const LOGO = "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";
 
@@ -157,7 +289,6 @@ const I_TEMP=`No temperature data is currently being collected.\n\nTo start: Pio
 const I_STIR=`No stirring data is currently being collected.\n\nStirring should be running if OD readings are active. Check that the Stirring activity is started in the Pioreactor UI.\n\nA sudden drop to 0 RPM means the stir bar detached — the culture stops being mixed, causing sedimentation and inaccurate OD readings.`;
 const I_GR=`No growth rate data is currently being collected.\n\nGrowth rate requires the Growth Rate activity AND actual organisms. With sterile water, it will always be zero.\n\nWith real organisms: expect yeast in YPD at 30°C to show a doubling time of ~90 minutes during exponential phase.`;
 
-const K=[{key:"r01",label:"Reactor 01",s:"R-01"},{key:"r02",label:"Reactor 02",s:"R-02"}];
 
 /* ─── ADD REACTOR MODAL ─── */
 const AddReactorModal = ({open, onClose, onAdd, th}) => {
@@ -165,17 +296,14 @@ const AddReactorModal = ({open, onClose, onAdd, th}) => {
   const [label, setLabel] = useState("");
   const [model, setModel] = useState("40mL v1.5");
   const [step, setStep] = useState(1);
+  const [adding, setAdding] = useState(false);
 
-  const reset = () => { setHostname(""); setLabel(""); setModel("40mL v1.5"); setStep(1); };
-  const handleAdd = () => {
+  const reset = () => { setHostname(""); setLabel(""); setModel("40mL v1.5"); setStep(1); setAdding(false); };
+  const handleAdd = async () => {
     if (!hostname.trim()) return;
-    onAdd({
-      id: hostname.trim(),
-      label: label.trim() || hostname.trim(),
-      role: "Worker",
-      status: "online",
-      model: model,
-    });
+    setAdding(true);
+    await onAdd(hostname.trim());
+    setAdding(false);
     reset();
     onClose();
   };
@@ -252,7 +380,7 @@ const AddReactorModal = ({open, onClose, onAdd, th}) => {
             </div>
             <div style={{display:"flex",gap:10}}>
               <button onClick={()=>setStep(1)} style={{flex:1,padding:"12px",borderRadius:10,border:`1px solid ${th.border}`,background:"transparent",color:th.textSecondary,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>← Back</button>
-              <button onClick={handleAdd} style={{flex:2,padding:"12px",borderRadius:10,border:"none",background:th.accent,color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Add to Cluster</button>
+              <button onClick={handleAdd} disabled={adding} style={{flex:2,padding:"12px",borderRadius:10,border:"none",background:th.accent,color:"#fff",fontSize:14,fontWeight:700,cursor:adding?"wait":"pointer",fontFamily:"inherit",opacity:adding?0.7:1}}>{adding?"Adding...":"Add to Cluster"}</button>
             </div>
           </div>
         )}
@@ -264,19 +392,32 @@ const AddReactorModal = ({open, onClose, onAdd, th}) => {
 /* ─── MAIN ─── */
 export default function App(){
   const[mode,setMode]=useState("light");const[showS,setShowS]=useState(false);const[sidebar,setSidebar]=useState(false);const[page,setPage]=useState("overview");
-  const[reactors,setReactors]=useState(INITIAL_REACTORS);
   const[showAddReactor,setShowAddReactor]=useState(false);
-  const th=themes[mode];const online=reactors.filter(r=>r.status==="online").length;
+  const th=themes[mode];
+  
+  // Live API data
+  const {
+    connected, loading, experiment, reactors, lastFetch,
+    odData, tempData, stirData, growthData,
+    addReactor, removeReactor, toggleStatus, refresh,
+  } = usePioreactorData();
+
+  const online=reactors.filter(r=>r.status==="online").length;
   const nav=[{id:"overview",icon:"◉",label:"Overview"},{id:"reactors",icon:"⬢",label:"Reactors"},{id:"od",icon:"◎",label:"OD Readings"},{id:"temp",icon:"◈",label:"Temperature"},{id:"stirring",icon:"↻",label:"Stirring"},{id:"growth",icon:"↗",label:"Growth Rate"},{id:"pumps",icon:"⬡",label:"Pump Control"},{id:"alerts",icon:"△",label:"Alerts"}];
 
-  const addReactor = (r) => setReactors(prev => [...prev, r]);
-  const removeReactor = (id) => setReactors(prev => prev.filter(r => r.id !== id));
-  const toggleStatus = (id) => setReactors(prev => prev.map(r => r.id === id ? {...r, status: r.status === "offline" ? "online" : "offline"} : r));
+  // Use dynamic keys from API data, or fallback
+  const odKeys = odData.keys.length ? odData.keys : [{key:"r01",label:"Reactor 01",s:"R-01"}];
+  const tempKeys = tempData.keys.length ? tempData.keys : odKeys;
+  const stirKeys = stirData.keys.length ? stirData.keys : odKeys;
+  const growthKeys = growthData.keys.length ? growthData.keys : odKeys;
 
-  const odP={title:"Optical Density (OD)",subtitle:`90° scatter · ${OD_DATA.length} readings · ~4 hours`,data:OD_DATA,keys:K,colors:[th.chartLine1,th.chartLine2],yFmt:v=>v<0.01?v.toFixed(4):v.toFixed(3),csvCols:[{key:"t",label:"Time"},{key:"r01",label:"Reactor_01_OD"},{key:"r02",label:"Reactor_02_OD"}],csvName:"od_readings",interpTitle:"OD Interpretation",interpText:I_OD,emptyIcon:"◎",emptyTitle:"No OD data yet",emptySub:"Start OD Reading on your Pioreactors.",emptyAction:"Start OD Reading →"};
-  const tempP={title:"Temperature (°C)",subtitle:"Thermostat control",data:TEMP_DATA,keys:K,colors:[th.chartLine1,th.chartLine2],yFmt:v=>v.toFixed(1)+"°",csvCols:[{key:"t",label:"Time"},{key:"r01",label:"R01_Temp"},{key:"r02",label:"R02_Temp"}],csvName:"temperature",interpTitle:"Temperature Interpretation",interpText:I_TEMP,emptyIcon:"🌡️",emptyTitle:"No temperature data",emptySub:"Start Temperature Automation (Thermostat, e.g. 30°C). Works with water.",emptyAction:"Start Temperature Automation →"};
-  const stirP={title:"Stirring Rate (RPM)",subtitle:"Stir bar rotation speed",data:STIRRING_DATA,keys:K,colors:[th.chartLine1,th.chartLine2],yFmt:v=>Math.round(v)+"",csvCols:[{key:"t",label:"Time"},{key:"r01",label:"R01_RPM"},{key:"r02",label:"R02_RPM"}],csvName:"stirring",interpTitle:"Stirring Interpretation",interpText:I_STIR,emptyIcon:"↻",emptyTitle:"No stirring data",emptySub:"Stirring data appears when the Stirring activity is running.",emptyAction:"Check Stirring Activity →"};
-  const grP={title:"Growth Rate",subtitle:"Calculated doubling time",data:GROWTH_DATA,keys:K,colors:[th.chartLine1,th.chartLine2],yFmt:v=>v.toFixed(4),csvCols:[{key:"t",label:"Time"},{key:"r01",label:"R01_GrowthRate"},{key:"r02",label:"R02_GrowthRate"}],csvName:"growth_rate",interpTitle:"Growth Rate Interpretation",interpText:I_GR,emptyIcon:"📈",emptyTitle:"No growth rate data",emptySub:"Requires Growth Rate activity AND organisms growing.",emptyAction:"Needs Active Culture"};
+  // Dynamic colors for however many reactors exist
+  const palette = [th.chartLine1, th.chartLine2, "#e06060", "#8b5cf6", "#22c55e", "#f59e0b", "#ec4899", "#06b6d4"];
+
+  const odP={title:"Optical Density (OD)",subtitle:odData.data.length?`90° scatter · ${odData.data.length} readings · Live`:"Waiting for data...",data:odData.data,keys:odKeys,colors:palette,yFmt:v=>v<0.01?v.toFixed(4):v.toFixed(3),csvCols:[{key:"t",label:"Time"},...odKeys.map(k=>({key:k.key,label:`${k.label}_OD`}))],csvName:"od_readings",interpTitle:"OD Interpretation",interpText:I_OD,emptyIcon:"◎",emptyTitle:"No OD data yet",emptySub:connected?"Start OD Reading on your Pioreactors.":"Cannot reach Pioreactor API. Are you on the lab network?",emptyAction:connected?"Start OD Reading →":"Check Connection"};
+  const tempP={title:"Temperature (°C)",subtitle:tempData.data.length?`${tempData.data.length} readings · Live`:"Not running",data:tempData.data,keys:tempKeys,colors:palette,yFmt:v=>v.toFixed(1)+"°",csvCols:[{key:"t",label:"Time"},...tempKeys.map(k=>({key:k.key,label:`${k.label}_Temp`}))],csvName:"temperature",interpTitle:"Temperature Interpretation",interpText:I_TEMP,emptyIcon:"🌡️",emptyTitle:"No temperature data",emptySub:connected?"Start Temperature Automation (Thermostat, e.g. 30°C). Works with water.":"Cannot reach Pioreactor API.",emptyAction:connected?"Start Temperature Automation →":"Check Connection"};
+  const stirP={title:"Stirring Rate (RPM)",subtitle:stirData.data.length?`${stirData.data.length} readings · Live`:"Not running",data:stirData.data,keys:stirKeys,colors:palette,yFmt:v=>Math.round(v)+"",csvCols:[{key:"t",label:"Time"},...stirKeys.map(k=>({key:k.key,label:`${k.label}_RPM`}))],csvName:"stirring",interpTitle:"Stirring Interpretation",interpText:I_STIR,emptyIcon:"↻",emptyTitle:"No stirring data",emptySub:connected?"Stirring data appears when the Stirring activity is running.":"Cannot reach Pioreactor API.",emptyAction:connected?"Check Stirring Activity →":"Check Connection"};
+  const grP={title:"Growth Rate",subtitle:growthData.data.length?`${growthData.data.length} readings · Live`:"Not running",data:growthData.data,keys:growthKeys,colors:palette,yFmt:v=>v.toFixed(4),csvCols:[{key:"t",label:"Time"},...growthKeys.map(k=>({key:k.key,label:`${k.label}_GrowthRate`}))],csvName:"growth_rate",interpTitle:"Growth Rate Interpretation",interpText:I_GR,emptyIcon:"📈",emptyTitle:"No growth rate data",emptySub:connected?"Requires Growth Rate activity AND organisms growing.":"Cannot reach Pioreactor API.",emptyAction:connected?"Needs Active Culture":"Check Connection"};
 
   const CS=({icon,title,desc})=><div style={{background:th.comingSoonBg,border:`1.5px dashed ${th.comingSoonBorder}`,borderRadius:14,padding:"28px 24px",textAlign:"center",position:"relative",overflow:"hidden"}}>
     <div style={{position:"absolute",inset:0,backgroundImage:`radial-gradient(${th.comingSoonBorder} 1px,transparent 1px)`,backgroundSize:"20px 20px",opacity:0.3}}/>
@@ -290,7 +431,7 @@ export default function App(){
     {/* SIDEBAR */}
     <div style={{position:"fixed",top:0,left:0,bottom:0,width:220,zIndex:100,background:th.surface,borderRight:`1px solid ${th.border}`,padding:"20px 0",display:"flex",flexDirection:"column",transform:sidebar?"translateX(0)":(typeof window!=="undefined"&&window.innerWidth<768?"translateX(-100%)":"translateX(0)"),transition:"transform 0.3s ease",boxShadow:sidebar?th.shadowHover:"none"}}>
       <div style={{padding:"0 20px",marginBottom:28}}><div style={{display:"flex",alignItems:"center",gap:10}}><img src={`data:image/png;base64,${LOGO}`} alt="Oliveira Lab" style={{width:50,height:50,objectFit:"contain"}}/><div><div style={{fontSize:14,fontWeight:700,color:th.text}}>Oliveira Lab</div><div style={{fontSize:10,color:th.textMuted,fontWeight:500}}>Bioreactor Dashboard</div></div></div></div>
-      <div style={{margin:"0 16px 20px",padding:"10px 14px",background:th.successBg,borderRadius:10,border:`1px solid ${th.success}25`}}><div style={{display:"flex",alignItems:"center",gap:6}}><Dot s="online" th={th}/><span style={{fontSize:12,fontWeight:600,color:th.success}}>{online} of {reactors.length} Online</span></div><div style={{fontSize:10,color:th.textMuted,marginTop:4}}>Demo experiment</div></div>
+      <div style={{margin:"0 16px 20px",padding:"10px 14px",background:connected?th.successBg:th.dangerBg,borderRadius:10,border:`1px solid ${connected?th.success:th.danger}25`}}><div style={{display:"flex",alignItems:"center",gap:6}}><Dot s={connected?"online":"offline"} th={th}/><span style={{fontSize:12,fontWeight:600,color:connected?th.success:th.danger}}>{connected?`${online} of ${reactors.length} Online`:"Offline — Not Connected"}</span></div><div style={{fontSize:10,color:th.textMuted,marginTop:4}}>{experiment?experiment.experiment:"No experiment"}{lastFetch&&` · ${lastFetch.toLocaleTimeString()}`}</div></div>
       <nav style={{flex:1,padding:"0 10px"}}>{nav.map(n=><button key={n.id} onClick={()=>{setPage(n.id);setSidebar(false)}} style={{display:"flex",alignItems:"center",gap:10,width:"100%",padding:"10px 14px",background:page===n.id?th.accentLight:"transparent",border:"none",borderRadius:9,cursor:"pointer",marginBottom:2,color:page===n.id?th.accent:th.textSecondary,fontWeight:page===n.id?600:500,fontSize:13,textAlign:"left",fontFamily:"inherit"}}><span style={{fontSize:14,width:20,textAlign:"center",opacity:0.7}}>{n.icon}</span>{n.label}</button>)}</nav>
       <div style={{padding:"0 10px",borderTop:`1px solid ${th.borderLight}`,paddingTop:16}}>
         <button onClick={()=>setShowS(!showS)} style={{display:"flex",alignItems:"center",gap:10,width:"100%",padding:"10px 14px",background:showS?th.bgAlt:"transparent",border:"none",borderRadius:9,cursor:"pointer",color:th.textSecondary,fontSize:13,fontWeight:500,textAlign:"left",fontFamily:"inherit"}}><span style={{fontSize:14,width:20,textAlign:"center",opacity:0.7}}>⚙</span>Settings</button>
@@ -305,7 +446,11 @@ export default function App(){
           <button onClick={()=>setSidebar(true)} style={{display:typeof window!=="undefined"&&window.innerWidth<768?"flex":"none",alignItems:"center",justifyContent:"center",width:36,height:36,borderRadius:9,background:th.bgAlt,border:`1px solid ${th.border}`,cursor:"pointer",fontSize:18,color:th.textSecondary}}>☰</button>
           <h1 style={{margin:0,fontSize:20,fontWeight:700,letterSpacing:"-0.02em",color:th.text}}>{nav.find(n=>n.id===page)?.label||"Overview"}</h1>
         </div>
-        <div style={{padding:"6px 12px",borderRadius:8,background:th.bgAlt,border:`1px solid ${th.border}`,fontSize:11,color:th.textMuted,fontWeight:500,fontFamily:"'JetBrains Mono',monospace"}}>{new Date().toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</div>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          {loading&&<div style={{width:16,height:16,borderRadius:"50%",border:`2px solid ${th.borderLight}`,borderTopColor:th.accent,animation:"spin 0.8s linear infinite"}}/>}
+          <button onClick={refresh} title="Refresh data" style={{padding:"6px 10px",borderRadius:7,background:th.bgAlt,border:`1px solid ${th.border}`,cursor:"pointer",fontSize:12,color:th.textSecondary,fontFamily:"inherit",fontWeight:600}}>↻</button>
+          <div style={{padding:"6px 12px",borderRadius:8,background:connected?th.successBg:th.dangerBg,border:`1px solid ${connected?th.success:th.danger}25`,fontSize:11,color:connected?th.success:th.danger,fontWeight:600,fontFamily:"'JetBrains Mono',monospace"}}>{connected?"● Connected":"○ Offline"}</div>
+        </div>
       </div>
 
       {page==="overview"&&<div style={{padding:"24px"}}>
