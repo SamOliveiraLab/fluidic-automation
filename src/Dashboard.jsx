@@ -92,6 +92,7 @@ const usePioreactorData = () => {
   const [stirData, setStirData] = useState({ data: [], keys: [] });
   const [growthData, setGrowthData] = useState({ data: [], keys: [] });
   const [lastFetch, setLastFetch] = useState(null);
+  const statusOverrides = useRef({}); // Keeps local toggle changes alive across refreshes
 
   const fetchAll = useCallback(async () => {
     // 1. Fetch workers
@@ -100,7 +101,12 @@ const usePioreactorData = () => {
     
     setConnected(true);
     const workers = transformWorkers(workersRaw);
-    setReactors(workers);
+    // Merge with local overrides so toggles persist
+    const merged = workers.map(w => statusOverrides.current[w.id] 
+      ? { ...w, status: statusOverrides.current[w.id] } 
+      : w
+    );
+    setReactors(merged);
 
     // 2. Fetch latest experiment
     const expsRaw = await api("/api/experiments");
@@ -157,13 +163,18 @@ const usePioreactorData = () => {
   const toggleStatus = async (id) => {
     const reactor = reactors.find(r => r.id === id);
     if (!reactor) return;
-    const newActive = reactor.status === "offline" ? 1 : 0;
+    const newStatus = reactor.status === "offline" ? "online" : "offline";
+    const newActive = newStatus === "online" ? 1 : 0;
+    // Store override so auto-refresh doesn't revert it
+    statusOverrides.current[id] = newStatus;
+    // Update local state immediately
+    setReactors(prev => prev.map(r => r.id === id ? { ...r, status: newStatus } : r));
+    // Try API call
     await fetch(`${API_BASE}/api/workers/${encodeURIComponent(id)}/is_active`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ is_active: newActive }),
     }).catch(() => {});
-    setReactors(prev => prev.map(r => r.id === id ? { ...r, status: newActive ? "online" : "offline" } : r));
   };
 
   return {
@@ -222,7 +233,7 @@ const Dot=({s,th})=>{const c={online:th.success,warning:th.warning,offline:th.da
 
 const Tip=({active,payload,label,th})=>{
   if(!active||!payload?.length)return null;
-  return (<div style={{background:th.surface,border:`1px solid ${th.border}`,borderRadius:10,padding:"10px 14px",boxShadow:th.shadow,fontSize:12}}>
+  return (<div style={{background:th.surface,border:`1px solid ${th.border}`,borderRadius:10,padding:"10px 14px",boxShadow:th.shadow,fontSize:14}}>
     <div style={{color:th.textMuted,marginBottom:6,fontWeight:600}}>{label} UTC</div>
     {payload.map((p,i)=><div key={i} style={{display:"flex",alignItems:"center",gap:8,marginBottom:2}}>
       <div style={{width:8,height:8,borderRadius:3,background:p.color}}/><span style={{color:th.textSecondary}}>{p.name}:</span>
@@ -239,10 +250,10 @@ const InterpModal=({open,onClose,th,title,text:interpText})=>{
   return (<div onClick={onClose} style={{position:"fixed",inset:0,zIndex:1000,background:th.modalOverlay,display:"flex",alignItems:"center",justifyContent:"center",padding:20,backdropFilter:"blur(4px)"}}>
     <div onClick={e=>e.stopPropagation()} style={{background:th.surface,borderRadius:18,maxWidth:560,width:"100%",maxHeight:"80vh",overflowY:"auto",border:`1px solid ${th.border}`,boxShadow:th.shadowHover}}>
       <div style={{padding:"20px 24px",borderBottom:`1px solid ${th.borderLight}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-        <div style={{display:"flex",alignItems:"center",gap:10}}><span style={{fontSize:20}}>🧬</span><div><h3 style={{margin:0,fontSize:16,fontWeight:700,color:th.text}}>{title}</h3><p style={{margin:0,fontSize:11,color:th.textMuted}}>AI-powered analysis</p></div></div>
-        <button onClick={onClose} style={{background:th.bgAlt,border:`1px solid ${th.border}`,borderRadius:8,width:32,height:32,cursor:"pointer",fontSize:16,color:th.textSecondary,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+        <div style={{display:"flex",alignItems:"center",gap:10}}><span style={{fontSize:22}}>🧬</span><div><h3 style={{margin:0,fontSize:18,fontWeight:700,color:th.text}}>{title}</h3><p style={{margin:0,fontSize:13,color:th.textMuted}}>AI-powered analysis</p></div></div>
+        <button onClick={onClose} style={{background:th.bgAlt,border:`1px solid ${th.border}`,borderRadius:8,width:32,height:32,cursor:"pointer",fontSize:18,color:th.textSecondary,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
       </div>
-      <div style={{padding:"20px 24px"}}>{loading?<div style={{textAlign:"center",padding:"32px 0"}}><div style={{width:36,height:36,borderRadius:"50%",border:`3px solid ${th.borderLight}`,borderTopColor:th.accent,animation:"spin 0.8s linear infinite",margin:"0 auto 16px"}}/><p style={{color:th.textMuted,fontSize:13}}>Analyzing data...</p></div>:<div style={{fontFamily:'"Newsreader",Georgia,serif',fontSize:14.5,lineHeight:1.85,color:th.textSecondary,whiteSpace:"pre-wrap"}}>{txt}</div>}</div>
+      <div style={{padding:"20px 24px"}}>{loading?<div style={{textAlign:"center",padding:"32px 0"}}><div style={{width:36,height:36,borderRadius:"50%",border:`3px solid ${th.borderLight}`,borderTopColor:th.accent,animation:"spin 0.8s linear infinite",margin:"0 auto 16px"}}/><p style={{color:th.textMuted,fontSize:15}}>Analyzing data...</p></div>:<div style={{fontFamily:'"Newsreader",Georgia,serif',fontSize:15.5,lineHeight:1.85,color:th.textSecondary,whiteSpace:"pre-wrap"}}>{txt}</div>}</div>
     </div>
   </div>)
 };
@@ -250,32 +261,32 @@ const Chart=({th,title,subtitle,data,keys,colors,yFmt,csvCols,csvName,interpTitl
   const[filter,setFilter]=useState("both");const[showI,setShowI]=useState(false);const ref=useRef(null);const has=data?.length>0;
   return (<><div ref={ref} style={{background:th.surface,border:`1px solid ${th.border}`,borderRadius:16,boxShadow:th.shadow,marginBottom:20,overflow:"hidden"}}>
     <div style={{padding:"18px 22px",borderBottom:`1px solid ${th.borderLight}`,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
-      <div style={{flex:1,minWidth:200}}><h2 style={{margin:0,fontSize:16,fontWeight:700,color:th.text}}>{title}</h2><p style={{margin:"4px 0 0",fontSize:12,color:th.textMuted}}>{subtitle}</p></div>
+      <div style={{flex:1,minWidth:200}}><h2 style={{margin:0,fontSize:18,fontWeight:700,color:th.text}}>{title}</h2><p style={{margin:"4px 0 0",fontSize:14,color:th.textMuted}}>{subtitle}</p></div>
       <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
-        {has&&keys.length>1&&["both",...keys.map(k=>k.key)].map(f=><button key={f} onClick={()=>setFilter(f)} style={{padding:"6px 12px",borderRadius:7,background:filter===f?th.accent:th.bgAlt,color:filter===f?"#fff":th.textMuted,border:`1px solid ${filter===f?th.accent:th.border}`,cursor:"pointer",fontSize:11,fontWeight:600,fontFamily:"inherit"}}>{f==="both"?"Both":keys.find(k=>k.key===f)?.s||f}</button>)}
-        {interpText&&<button onClick={()=>setShowI(true)} style={{padding:"6px 14px",borderRadius:7,background:"transparent",border:`1.5px solid ${th.accent}50`,color:th.accent,cursor:"pointer",fontSize:11,fontWeight:700,fontFamily:"inherit"}}>🧬 Interpret</button>}
-        <button onClick={()=>exportCSV(data,csvCols,csvName)} disabled={!has} style={{padding:"5px 10px",borderRadius:6,fontSize:10,fontWeight:600,fontFamily:"inherit",background:has?th.bgAlt:"transparent",border:`1px solid ${th.border}`,color:has?th.textSecondary:th.textMuted,cursor:has?"pointer":"default",opacity:has?1:0.4}}>↓ CSV</button>
-        <button onClick={()=>exportPNG(ref,csvName)} disabled={!has} style={{padding:"5px 10px",borderRadius:6,fontSize:10,fontWeight:600,fontFamily:"inherit",background:has?th.bgAlt:"transparent",border:`1px solid ${th.border}`,color:has?th.textSecondary:th.textMuted,cursor:has?"pointer":"default",opacity:has?1:0.4}}>↓ PNG</button>
+        {has&&keys.length>1&&["both",...keys.map(k=>k.key)].map(f=><button key={f} onClick={()=>setFilter(f)} style={{padding:"6px 12px",borderRadius:7,background:filter===f?th.accent:th.bgAlt,color:filter===f?"#fff":th.textMuted,border:`1px solid ${filter===f?th.accent:th.border}`,cursor:"pointer",fontSize:13,fontWeight:600,fontFamily:"inherit"}}>{f==="both"?"Both":keys.find(k=>k.key===f)?.s||f}</button>)}
+        {interpText&&<button onClick={()=>setShowI(true)} style={{padding:"6px 14px",borderRadius:7,background:"transparent",border:`1.5px solid ${th.accent}50`,color:th.accent,cursor:"pointer",fontSize:13,fontWeight:700,fontFamily:"inherit"}}>🧬 Interpret</button>}
+        <button onClick={()=>exportCSV(data,csvCols,csvName)} disabled={!has} style={{padding:"5px 10px",borderRadius:6,fontSize:12,fontWeight:600,fontFamily:"inherit",background:has?th.bgAlt:"transparent",border:`1px solid ${th.border}`,color:has?th.textSecondary:th.textMuted,cursor:has?"pointer":"default",opacity:has?1:0.4}}>↓ CSV</button>
+        <button onClick={()=>exportPNG(ref,csvName)} disabled={!has} style={{padding:"5px 10px",borderRadius:6,fontSize:12,fontWeight:600,fontFamily:"inherit",background:has?th.bgAlt:"transparent",border:`1px solid ${th.border}`,color:has?th.textSecondary:th.textMuted,cursor:has?"pointer":"default",opacity:has?1:0.4}}>↓ PNG</button>
       </div>
     </div>
     {has?<><div style={{padding:"16px 10px 8px 0"}}><ResponsiveContainer width="100%" height={260}><AreaChart data={data} margin={{top:10,right:16,left:8,bottom:5}}>
       <defs>{keys.map((dk,i)=><linearGradient key={dk.key} id={`f-${csvName}-${dk.key}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={colors[i]} stopOpacity={0.2}/><stop offset="100%" stopColor={colors[i]} stopOpacity={0.01}/></linearGradient>)}</defs>
-      <CartesianGrid strokeDasharray="3 3" stroke={th.gridLine}/><XAxis dataKey="t" tick={{fontSize:10,fill:th.textMuted}} axisLine={{stroke:th.border}} tickLine={false} interval={5}/>
-      <YAxis domain={["auto","auto"]} tick={{fontSize:10,fill:th.textMuted}} axisLine={{stroke:th.border}} tickLine={false} width={58} tickFormatter={yFmt||(v=>v.toFixed(3))}/>
+      <CartesianGrid strokeDasharray="3 3" stroke={th.gridLine}/><XAxis dataKey="t" tick={{fontSize:12,fill:th.textMuted}} axisLine={{stroke:th.border}} tickLine={false} interval={5}/>
+      <YAxis domain={["auto","auto"]} tick={{fontSize:12,fill:th.textMuted}} axisLine={{stroke:th.border}} tickLine={false} width={58} tickFormatter={yFmt||(v=>v.toFixed(3))}/>
       <Tooltip content={<Tip th={th}/>}/>
       {keys.map((dk,i)=>(filter==="both"||filter===dk.key)&&<Area key={dk.key} type="monotone" dataKey={dk.key} name={dk.label} stroke={colors[i]} fill={`url(#f-${csvName}-${dk.key})`} strokeWidth={2.5} dot={false}/>)}
     </AreaChart></ResponsiveContainer></div>
     <div style={{padding:"14px 22px",borderTop:`1px solid ${th.borderLight}`,display:"flex",gap:24,flexWrap:"wrap"}}>
       {keys.map((dk,i)=>{const vals=data.map(d=>d[dk.key]).filter(v=>v!=null);const cur=vals[vals.length-1];const delta=cur-vals[0];return (<div key={dk.key} style={{display:"flex",gap:20}}>
-        <div><div style={{fontSize:10,color:th.textMuted,fontWeight:600,marginBottom:2}}>{dk.s} Current</div><div style={{fontSize:16,fontWeight:700,color:colors[i],fontFamily:"'JetBrains Mono',monospace"}}>{cur?.toFixed(4)}</div></div>
-        <div><div style={{fontSize:10,color:th.textMuted,fontWeight:600,marginBottom:2}}>{dk.s} Δ</div><div style={{fontSize:16,fontWeight:700,color:delta>=0?th.success:th.danger,fontFamily:"'JetBrains Mono',monospace"}}>{delta>=0?"+":""}{delta?.toFixed(4)}</div></div>
+        <div><div style={{fontSize:12,color:th.textMuted,fontWeight:600,marginBottom:2}}>{dk.s} Current</div><div style={{fontSize:18,fontWeight:700,color:colors[i],fontFamily:"'JetBrains Mono',monospace"}}>{cur?.toFixed(4)}</div></div>
+        <div><div style={{fontSize:12,color:th.textMuted,fontWeight:600,marginBottom:2}}>{dk.s} Δ</div><div style={{fontSize:18,fontWeight:700,color:delta>=0?th.success:th.danger,fontFamily:"'JetBrains Mono',monospace"}}>{delta>=0?"+":""}{delta?.toFixed(4)}</div></div>
       </div>)})}
     </div></>
     :<div style={{padding:"48px 24px",textAlign:"center",background:`repeating-linear-gradient(45deg,transparent,transparent 10px,${th.border}08 10px,${th.border}08 11px)`,borderRadius:8,margin:"16px 22px"}}>
       <div style={{fontSize:36,marginBottom:12,opacity:0.35}}>{emptyIcon}</div>
-      <div style={{fontSize:14,fontWeight:600,color:th.textSecondary,marginBottom:6}}>{emptyTitle}</div>
-      <div style={{fontSize:12,color:th.textMuted,lineHeight:1.6,maxWidth:360,margin:"0 auto"}}>{emptySub}</div>
-      {emptyAction&&<div style={{marginTop:14,display:"inline-block",fontSize:11,fontWeight:700,color:th.accent,background:th.accentLight,padding:"6px 14px",borderRadius:7}}>{emptyAction}</div>}
+      <div style={{fontSize:15,fontWeight:600,color:th.textSecondary,marginBottom:6}}>{emptyTitle}</div>
+      <div style={{fontSize:14,color:th.textMuted,lineHeight:1.6,maxWidth:360,margin:"0 auto"}}>{emptySub}</div>
+      {emptyAction&&<div style={{marginTop:14,display:"inline-block",fontSize:13,fontWeight:700,color:th.accent,background:th.accentLight,padding:"6px 14px",borderRadius:7}}>{emptyAction}</div>}
     </div>}
   </div>
   <InterpModal open={showI} onClose={()=>setShowI(false)} th={th} title={interpTitle} text={interpText||""}/></>)
@@ -307,47 +318,47 @@ const AddReactorModal = ({open, onClose, onAdd, th}) => {
   };
 
   if (!open) return null;
-  const inp = {width:"100%",padding:"10px 14px",borderRadius:9,border:`1px solid ${th.border}`,background:th.bgAlt,color:th.text,fontSize:13,fontFamily:"inherit",outline:"none"};
+  const inp = {width:"100%",padding:"10px 14px",borderRadius:9,border:`1px solid ${th.border}`,background:th.bgAlt,color:th.text,fontSize:15,fontFamily:"inherit",outline:"none"};
 
   return (
     <div onClick={()=>{reset();onClose()}} style={{position:"fixed",inset:0,zIndex:1000,background:th.modalOverlay,display:"flex",alignItems:"center",justifyContent:"center",padding:20,backdropFilter:"blur(4px)"}}>
       <div onClick={e=>e.stopPropagation()} style={{background:th.surface,borderRadius:18,maxWidth:480,width:"100%",border:`1px solid ${th.border}`,boxShadow:th.shadowHover,overflow:"hidden"}}>
         <div style={{padding:"20px 24px",borderBottom:`1px solid ${th.borderLight}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <span style={{fontSize:20}}>➕</span>
+            <span style={{fontSize:22}}>➕</span>
             <div>
-              <h3 style={{margin:0,fontSize:16,fontWeight:700,color:th.text}}>Add Bioreactor</h3>
-              <p style={{margin:0,fontSize:11,color:th.textMuted}}>Step {step} of 2</p>
+              <h3 style={{margin:0,fontSize:18,fontWeight:700,color:th.text}}>Add Bioreactor</h3>
+              <p style={{margin:0,fontSize:13,color:th.textMuted}}>Step {step} of 2</p>
             </div>
           </div>
-          <button onClick={()=>{reset();onClose()}} style={{background:th.bgAlt,border:`1px solid ${th.border}`,borderRadius:8,width:32,height:32,cursor:"pointer",fontSize:16,color:th.textSecondary,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+          <button onClick={()=>{reset();onClose()}} style={{background:th.bgAlt,border:`1px solid ${th.border}`,borderRadius:8,width:32,height:32,cursor:"pointer",fontSize:18,color:th.textSecondary,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
         </div>
 
         {step === 1 && (
           <div style={{padding:"24px"}}>
             <div style={{marginBottom:20,padding:"14px 16px",background:th.accentLight,borderRadius:10,border:`1px solid ${th.accent}20`}}>
-              <p style={{margin:0,fontSize:12,color:th.accent,lineHeight:1.6}}>
+              <p style={{margin:0,fontSize:14,color:th.accent,lineHeight:1.6}}>
                 <strong>Before adding here:</strong> Make sure the Pioreactor has Worker software installed and is connected to the same Wi-Fi network as your Leader.
               </p>
             </div>
             <div style={{marginBottom:16}}>
-              <label style={{display:"block",fontSize:12,fontWeight:600,color:th.textSecondary,marginBottom:6}}>Hostname *</label>
+              <label style={{display:"block",fontSize:14,fontWeight:600,color:th.textSecondary,marginBottom:6}}>Hostname *</label>
               <input value={hostname} onChange={e=>setHostname(e.target.value)} placeholder="e.g. worker05 or oliveirapioreactor05" style={inp}/>
-              <p style={{margin:"6px 0 0",fontSize:11,color:th.textMuted}}>The name you gave it during SD card setup in Raspberry Pi Imager</p>
+              <p style={{margin:"6px 0 0",fontSize:13,color:th.textMuted}}>The name you gave it during SD card setup in Raspberry Pi Imager</p>
             </div>
             <div style={{marginBottom:16}}>
-              <label style={{display:"block",fontSize:12,fontWeight:600,color:th.textSecondary,marginBottom:6}}>Display Label</label>
+              <label style={{display:"block",fontSize:14,fontWeight:600,color:th.textSecondary,marginBottom:6}}>Display Label</label>
               <input value={label} onChange={e=>setLabel(e.target.value)} placeholder="e.g. Bioreactor 05 (optional)" style={inp}/>
             </div>
             <div style={{marginBottom:20}}>
-              <label style={{display:"block",fontSize:12,fontWeight:600,color:th.textSecondary,marginBottom:6}}>Model</label>
+              <label style={{display:"block",fontSize:14,fontWeight:600,color:th.textSecondary,marginBottom:6}}>Model</label>
               <div style={{display:"flex",gap:8}}>
                 {["20mL v1.1","40mL v1.5"].map(m=>(
-                  <button key={m} onClick={()=>setModel(m)} style={{flex:1,padding:"10px",borderRadius:8,border:`1.5px solid ${model===m?th.accent:th.border}`,background:model===m?th.accentLight:"transparent",color:model===m?th.accent:th.textSecondary,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>{m}</button>
+                  <button key={m} onClick={()=>setModel(m)} style={{flex:1,padding:"10px",borderRadius:8,border:`1.5px solid ${model===m?th.accent:th.border}`,background:model===m?th.accentLight:"transparent",color:model===m?th.accent:th.textSecondary,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>{m}</button>
                 ))}
               </div>
             </div>
-            <button onClick={()=>{if(hostname.trim()) setStep(2)}} disabled={!hostname.trim()} style={{width:"100%",padding:"12px",borderRadius:10,border:"none",background:hostname.trim()?th.accent:th.border,color:hostname.trim()?"#fff":th.textMuted,fontSize:14,fontWeight:700,cursor:hostname.trim()?"pointer":"default",fontFamily:"inherit"}}>
+            <button onClick={()=>{if(hostname.trim()) setStep(2)}} disabled={!hostname.trim()} style={{width:"100%",padding:"12px",borderRadius:10,border:"none",background:hostname.trim()?th.accent:th.border,color:hostname.trim()?"#fff":th.textMuted,fontSize:15,fontWeight:700,cursor:hostname.trim()?"pointer":"default",fontFamily:"inherit"}}>
               Next →
             </button>
           </div>
@@ -356,7 +367,7 @@ const AddReactorModal = ({open, onClose, onAdd, th}) => {
         {step === 2 && (
           <div style={{padding:"24px"}}>
             <div style={{marginBottom:24}}>
-              <div style={{fontSize:12,fontWeight:600,color:th.textMuted,marginBottom:12,textTransform:"uppercase",letterSpacing:"0.08em"}}>Confirm Details</div>
+              <div style={{fontSize:14,fontWeight:600,color:th.textMuted,marginBottom:12,textTransform:"uppercase",letterSpacing:"0.08em"}}>Confirm Details</div>
               <div style={{background:th.bgAlt,borderRadius:12,padding:"16px 18px",border:`1px solid ${th.border}`}}>
                 {[
                   {k:"Hostname",v:hostname},
@@ -365,20 +376,20 @@ const AddReactorModal = ({open, onClose, onAdd, th}) => {
                   {k:"Model",v:model},
                 ].map((row,i)=>(
                   <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:i<3?`1px solid ${th.borderLight}`:"none"}}>
-                    <span style={{fontSize:12,color:th.textMuted}}>{row.k}</span>
-                    <span style={{fontSize:12,fontWeight:600,color:th.text,fontFamily:"'JetBrains Mono',monospace"}}>{row.v}</span>
+                    <span style={{fontSize:14,color:th.textMuted}}>{row.k}</span>
+                    <span style={{fontSize:14,fontWeight:600,color:th.text,fontFamily:"'JetBrains Mono',monospace"}}>{row.v}</span>
                   </div>
                 ))}
               </div>
             </div>
             <div style={{marginBottom:20,padding:"14px 16px",background:th.warningBg,borderRadius:10,border:`1px solid ${th.warning}20`}}>
-              <p style={{margin:0,fontSize:12,color:th.warning,lineHeight:1.6}}>
-                <strong>On the lab network:</strong> This will run <code style={{fontSize:11,background:`${th.warning}15`,padding:"1px 6px",borderRadius:4}}>pio workers add {hostname}</code> on the Leader. Make sure the Pioreactor is powered on.
+              <p style={{margin:0,fontSize:14,color:th.warning,lineHeight:1.6}}>
+                <strong>On the lab network:</strong> This will run <code style={{fontSize:13,background:`${th.warning}15`,padding:"1px 6px",borderRadius:4}}>pio workers add {hostname}</code> on the Leader. Make sure the Pioreactor is powered on.
               </p>
             </div>
             <div style={{display:"flex",gap:10}}>
-              <button onClick={()=>setStep(1)} style={{flex:1,padding:"12px",borderRadius:10,border:`1px solid ${th.border}`,background:"transparent",color:th.textSecondary,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>← Back</button>
-              <button onClick={handleAdd} disabled={adding} style={{flex:2,padding:"12px",borderRadius:10,border:"none",background:th.accent,color:"#fff",fontSize:14,fontWeight:700,cursor:adding?"wait":"pointer",fontFamily:"inherit",opacity:adding?0.7:1}}>{adding?"Adding...":"Add to Cluster"}</button>
+              <button onClick={()=>setStep(1)} style={{flex:1,padding:"12px",borderRadius:10,border:`1px solid ${th.border}`,background:"transparent",color:th.textSecondary,fontSize:15,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>← Back</button>
+              <button onClick={handleAdd} disabled={adding} style={{flex:2,padding:"12px",borderRadius:10,border:"none",background:th.accent,color:"#fff",fontSize:15,fontWeight:700,cursor:adding?"wait":"pointer",fontFamily:"inherit",opacity:adding?0.7:1}}>{adding?"Adding...":"Add to Cluster"}</button>
             </div>
           </div>
         )}
@@ -419,7 +430,7 @@ export default function App(){
 
   const CS=({icon,title,desc})=><div style={{background:th.comingSoonBg,border:`1.5px dashed ${th.comingSoonBorder}`,borderRadius:14,padding:"28px 24px",textAlign:"center",position:"relative",overflow:"hidden"}}>
     <div style={{position:"absolute",inset:0,backgroundImage:`radial-gradient(${th.comingSoonBorder} 1px,transparent 1px)`,backgroundSize:"20px 20px",opacity:0.3}}/>
-    <div style={{position:"relative"}}><div style={{fontSize:32,marginBottom:12,opacity:0.5}}>{icon}</div><div style={{display:"inline-block",fontSize:10,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",color:th.accent,background:th.accentLight,padding:"4px 12px",borderRadius:20,marginBottom:12}}>Coming Soon</div><h3 style={{margin:"0 0 8px",fontSize:16,fontWeight:700,color:th.text}}>{title}</h3><p style={{margin:0,fontSize:13,color:th.textMuted,lineHeight:1.6}}>{desc}</p></div></div>;
+    <div style={{position:"relative"}}><div style={{fontSize:32,marginBottom:12,opacity:0.5}}>{icon}</div><div style={{display:"inline-block",fontSize:12,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",color:th.accent,background:th.accentLight,padding:"4px 12px",borderRadius:20,marginBottom:12}}>Coming Soon</div><h3 style={{margin:"0 0 8px",fontSize:18,fontWeight:700,color:th.text}}>{title}</h3><p style={{margin:0,fontSize:15,color:th.textMuted,lineHeight:1.6}}>{desc}</p></div></div>;
 
   return (<div style={{fontFamily:'"Outfit","Segoe UI",sans-serif',background:th.bg,minHeight:"100vh",color:th.text,transition:"background 0.3s,color 0.3s",position:"relative"}}>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Newsreader:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
@@ -428,12 +439,12 @@ export default function App(){
 
     {/* SIDEBAR */}
     <div style={{position:"fixed",top:0,left:0,bottom:0,width:220,zIndex:100,background:th.surface,borderRight:`1px solid ${th.border}`,padding:"20px 0",display:"flex",flexDirection:"column",transform:sidebar?"translateX(0)":(typeof window!=="undefined"&&window.innerWidth<768?"translateX(-100%)":"translateX(0)"),transition:"transform 0.3s ease",boxShadow:sidebar?th.shadowHover:"none"}}>
-      <div style={{padding:"0 20px",marginBottom:28}}><div style={{display:"flex",alignItems:"center",gap:10}}><img src={`data:image/png;base64,${LOGO}`} alt="Oliveira Lab" style={{width:50,height:50,objectFit:"contain"}}/><div><div style={{fontSize:14,fontWeight:700,color:th.text}}>Oliveira Lab</div><div style={{fontSize:10,color:th.textMuted,fontWeight:500}}>Bioreactor Dashboard</div></div></div></div>
-      <div style={{margin:"0 16px 20px",padding:"10px 14px",background:connected?th.successBg:th.dangerBg,borderRadius:10,border:`1px solid ${connected?th.success:th.danger}25`}}><div style={{display:"flex",alignItems:"center",gap:6}}><Dot s={connected?"online":"offline"} th={th}/><span style={{fontSize:12,fontWeight:600,color:connected?th.success:th.danger}}>{connected?`${online} of ${reactors.length} Online`:"Offline — Not Connected"}</span></div><div style={{fontSize:10,color:th.textMuted,marginTop:4}}>{experiment?experiment.experiment:"No experiment"}{lastFetch&&` · ${lastFetch.toLocaleTimeString()}`}</div></div>
-      <nav style={{flex:1,padding:"0 10px"}}>{nav.map(n=><button key={n.id} onClick={()=>{setPage(n.id);setSidebar(false)}} style={{display:"flex",alignItems:"center",gap:10,width:"100%",padding:"10px 14px",background:page===n.id?th.accentLight:"transparent",border:"none",borderRadius:9,cursor:"pointer",marginBottom:2,color:page===n.id?th.accent:th.textSecondary,fontWeight:page===n.id?600:500,fontSize:13,textAlign:"left",fontFamily:"inherit"}}><span style={{fontSize:14,width:20,textAlign:"center",opacity:0.7}}>{n.icon}</span>{n.label}</button>)}</nav>
+      <div style={{padding:"0 20px",marginBottom:28}}><div style={{display:"flex",alignItems:"center",gap:10}}><img src={`data:image/png;base64,${LOGO}`} alt="Oliveira Lab" style={{width:50,height:50,objectFit:"contain"}}/><div><div style={{fontSize:15,fontWeight:700,color:th.text}}>Oliveira Lab</div><div style={{fontSize:12,color:th.textMuted,fontWeight:500}}>Bioreactor Dashboard</div></div></div></div>
+      <div style={{margin:"0 16px 20px",padding:"10px 14px",background:connected?th.successBg:th.dangerBg,borderRadius:10,border:`1px solid ${connected?th.success:th.danger}25`}}><div style={{display:"flex",alignItems:"center",gap:6}}><Dot s={connected?"online":"offline"} th={th}/><span style={{fontSize:14,fontWeight:600,color:connected?th.success:th.danger}}>{connected?`${online} of ${reactors.length} Online`:"Offline — Not Connected"}</span></div><div style={{fontSize:12,color:th.textMuted,marginTop:4}}>{experiment?experiment.experiment:"No experiment"}{lastFetch&&` · ${lastFetch.toLocaleTimeString()}`}</div></div>
+      <nav style={{flex:1,padding:"0 10px"}}>{nav.map(n=><button key={n.id} onClick={()=>{setPage(n.id);setSidebar(false)}} style={{display:"flex",alignItems:"center",gap:10,width:"100%",padding:"10px 14px",background:page===n.id?th.accentLight:"transparent",border:"none",borderRadius:9,cursor:"pointer",marginBottom:2,color:page===n.id?th.accent:th.textSecondary,fontWeight:page===n.id?600:500,fontSize:15,textAlign:"left",fontFamily:"inherit"}}><span style={{fontSize:15,width:20,textAlign:"center",opacity:0.7}}>{n.icon}</span>{n.label}</button>)}</nav>
       <div style={{padding:"0 10px",borderTop:`1px solid ${th.borderLight}`,paddingTop:16}}>
-        <button onClick={()=>setShowS(!showS)} style={{display:"flex",alignItems:"center",gap:10,width:"100%",padding:"10px 14px",background:showS?th.bgAlt:"transparent",border:"none",borderRadius:9,cursor:"pointer",color:th.textSecondary,fontSize:13,fontWeight:500,textAlign:"left",fontFamily:"inherit"}}><span style={{fontSize:14,width:20,textAlign:"center",opacity:0.7}}>⚙</span>Settings</button>
-        {showS&&<div style={{padding:"12px 14px"}}><div style={{fontSize:11,color:th.textMuted,fontWeight:600,marginBottom:8,textTransform:"uppercase",letterSpacing:"0.08em"}}>Appearance</div><div style={{display:"flex",borderRadius:8,overflow:"hidden",border:`1px solid ${th.border}`}}>{["light","dark"].map(m=><button key={m} onClick={()=>setMode(m)} style={{flex:1,padding:"8px 0",background:mode===m?th.accent:th.bgAlt,color:mode===m?"#fff":th.textMuted,border:"none",cursor:"pointer",fontSize:12,fontWeight:600,fontFamily:"inherit",textTransform:"capitalize"}}>{m==="light"?"☀ ":"☽ "}{m}</button>)}</div></div>}
+        <button onClick={()=>setShowS(!showS)} style={{display:"flex",alignItems:"center",gap:10,width:"100%",padding:"10px 14px",background:showS?th.bgAlt:"transparent",border:"none",borderRadius:9,cursor:"pointer",color:th.textSecondary,fontSize:15,fontWeight:500,textAlign:"left",fontFamily:"inherit"}}><span style={{fontSize:15,width:20,textAlign:"center",opacity:0.7}}>⚙</span>Settings</button>
+        {showS&&<div style={{padding:"12px 14px"}}><div style={{fontSize:13,color:th.textMuted,fontWeight:600,marginBottom:8,textTransform:"uppercase",letterSpacing:"0.08em"}}>Appearance</div><div style={{display:"flex",borderRadius:8,overflow:"hidden",border:`1px solid ${th.border}`}}>{["light","dark"].map(m=><button key={m} onClick={()=>setMode(m)} style={{flex:1,padding:"8px 0",background:mode===m?th.accent:th.bgAlt,color:mode===m?"#fff":th.textMuted,border:"none",cursor:"pointer",fontSize:14,fontWeight:600,fontFamily:"inherit",textTransform:"capitalize"}}>{m==="light"?"☀ ":"☽ "}{m}</button>)}</div></div>}
       </div>
     </div>
 
@@ -441,22 +452,22 @@ export default function App(){
     <div style={{marginLeft:typeof window!=="undefined"&&window.innerWidth<768?0:220,minHeight:"100vh",position:"relative",zIndex:1}}>
       <div style={{padding:"16px 24px",borderBottom:`1px solid ${th.borderLight}`,background:`${th.surface}e0`,backdropFilter:"blur(12px)",position:"sticky",top:0,zIndex:50,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
         <div style={{display:"flex",alignItems:"center",gap:14}}>
-          <button onClick={()=>setSidebar(true)} style={{display:typeof window!=="undefined"&&window.innerWidth<768?"flex":"none",alignItems:"center",justifyContent:"center",width:36,height:36,borderRadius:9,background:th.bgAlt,border:`1px solid ${th.border}`,cursor:"pointer",fontSize:18,color:th.textSecondary}}>☰</button>
-          <h1 style={{margin:0,fontSize:20,fontWeight:700,letterSpacing:"-0.02em",color:th.text}}>{nav.find(n=>n.id===page)?.label||"Overview"}</h1>
+          <button onClick={()=>setSidebar(true)} style={{display:typeof window!=="undefined"&&window.innerWidth<768?"flex":"none",alignItems:"center",justifyContent:"center",width:36,height:36,borderRadius:9,background:th.bgAlt,border:`1px solid ${th.border}`,cursor:"pointer",fontSize:20,color:th.textSecondary}}>☰</button>
+          <h1 style={{margin:0,fontSize:24,fontWeight:700,letterSpacing:"-0.02em",color:th.text}}>{nav.find(n=>n.id===page)?.label||"Overview"}</h1>
         </div>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
           {loading&&<div style={{width:16,height:16,borderRadius:"50%",border:`2px solid ${th.borderLight}`,borderTopColor:th.accent,animation:"spin 0.8s linear infinite"}}/>}
-          <button onClick={refresh} title="Refresh data" style={{padding:"6px 10px",borderRadius:7,background:th.bgAlt,border:`1px solid ${th.border}`,cursor:"pointer",fontSize:12,color:th.textSecondary,fontFamily:"inherit",fontWeight:600}}>↻</button>
-          <div style={{padding:"6px 12px",borderRadius:8,background:connected?th.successBg:th.dangerBg,border:`1px solid ${connected?th.success:th.danger}25`,fontSize:11,color:connected?th.success:th.danger,fontWeight:600,fontFamily:"'JetBrains Mono',monospace"}}>{connected?"● Connected":"○ Offline"}</div>
+          <button onClick={refresh} title="Refresh data" style={{padding:"6px 10px",borderRadius:7,background:th.bgAlt,border:`1px solid ${th.border}`,cursor:"pointer",fontSize:14,color:th.textSecondary,fontFamily:"inherit",fontWeight:600}}>↻</button>
+          <div style={{padding:"6px 12px",borderRadius:8,background:connected?th.successBg:th.dangerBg,border:`1px solid ${connected?th.success:th.danger}25`,fontSize:13,color:connected?th.success:th.danger,fontWeight:600,fontFamily:"'JetBrains Mono',monospace"}}>{connected?"● Connected":"○ Offline"}</div>
         </div>
       </div>
 
       {page==="overview"&&<div style={{padding:"24px"}}>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))",gap:14,marginBottom:28}}>{reactors.map(r=><div key={r.id} style={{background:th.surface,border:`1px solid ${th.border}`,borderRadius:14,padding:"18px 20px",boxShadow:th.shadow,position:"relative",overflow:"hidden"}}>
-          {r.status==="offline"&&<div style={{position:"absolute",inset:0,background:`${th.bg}90`,zIndex:2,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:14,backdropFilter:"blur(2px)"}}><span style={{fontSize:12,fontWeight:700,color:th.danger,background:th.dangerBg,padding:"6px 14px",borderRadius:8}}>EXCLUDED</span></div>}
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}><div><div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}><Dot s={r.status} th={th}/><span style={{fontSize:14,fontWeight:700,color:th.text}}>{r.label}</span></div><span style={{fontSize:10,fontWeight:600,color:th.accent,background:th.accentLight,padding:"2px 8px",borderRadius:5}}>{r.role}</span></div><span style={{fontSize:10,color:th.textMuted,fontWeight:500,background:th.bgAlt,padding:"3px 8px",borderRadius:6}}>{r.model}</span></div>
-          <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:10,color:th.textSecondary}}>{r.id}</div>
-          {r.status==="warning"&&<div style={{marginTop:12,padding:"8px 10px",borderRadius:8,background:th.warningBg,border:`1px solid ${th.warning}20`,fontSize:11,color:th.warning,fontWeight:500}}>⚠ Photodiode cables swapped + stir bar check</div>}
+          {r.status==="offline"&&<div style={{position:"absolute",inset:0,background:`${th.bg}90`,zIndex:2,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:14,backdropFilter:"blur(2px)"}}><span style={{fontSize:14,fontWeight:700,color:th.danger,background:th.dangerBg,padding:"6px 14px",borderRadius:8}}>EXCLUDED</span></div>}
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}><div><div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}><Dot s={r.status} th={th}/><span style={{fontSize:15,fontWeight:700,color:th.text}}>{r.label}</span></div><span style={{fontSize:12,fontWeight:600,color:th.accent,background:th.accentLight,padding:"2px 8px",borderRadius:5}}>{r.role}</span></div><span style={{fontSize:12,color:th.textMuted,fontWeight:500,background:th.bgAlt,padding:"3px 8px",borderRadius:6}}>{r.model}</span></div>
+          <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:12,color:th.textSecondary}}>{r.id}</div>
+          {r.status==="warning"&&<div style={{marginTop:12,padding:"8px 10px",borderRadius:8,background:th.warningBg,border:`1px solid ${th.warning}20`,fontSize:13,color:th.warning,fontWeight:500}}>⚠ Photodiode cables swapped + stir bar check</div>}
         </div>)}</div>
         <Chart th={th} {...odP}/><Chart th={th} {...tempP}/><Chart th={th} {...stirP}/><Chart th={th} {...grP}/>
       </div>}
@@ -465,10 +476,10 @@ export default function App(){
       {page==="reactors"&&<div style={{padding:"24px"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
           <div>
-            <p style={{margin:0,fontSize:13,color:th.textSecondary}}>{reactors.length} bioreactors · {online} online · {reactors.filter(r=>r.status==="offline").length} offline</p>
+            <p style={{margin:0,fontSize:15,color:th.textSecondary}}>{reactors.length} bioreactors · {online} online · {reactors.filter(r=>r.status==="offline").length} offline</p>
           </div>
-          <button onClick={()=>setShowAddReactor(true)} style={{padding:"10px 20px",borderRadius:10,border:"none",background:th.accent,color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:8}}>
-            <span style={{fontSize:18,lineHeight:1}}>+</span> Add Bioreactor
+          <button onClick={()=>setShowAddReactor(true)} style={{padding:"10px 20px",borderRadius:10,border:"none",background:th.accent,color:"#fff",fontSize:15,fontWeight:700,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:8}}>
+            <span style={{fontSize:20,lineHeight:1}}>+</span> Add Bioreactor
           </button>
         </div>
 
@@ -478,43 +489,43 @@ export default function App(){
               <div style={{flex:"0 0 auto"}}><Dot s={r.status} th={th}/></div>
               <div style={{flex:1,minWidth:160}}>
                 <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
-                  <span style={{fontSize:15,fontWeight:700,color:th.text}}>{r.label}</span>
-                  <span style={{fontSize:10,fontWeight:600,color:th.accent,background:th.accentLight,padding:"2px 8px",borderRadius:5}}>{r.role}</span>
+                  <span style={{fontSize:17,fontWeight:700,color:th.text}}>{r.label}</span>
+                  <span style={{fontSize:12,fontWeight:600,color:th.accent,background:th.accentLight,padding:"2px 8px",borderRadius:5}}>{r.role}</span>
                 </div>
-                <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:11,color:th.textMuted}}>{r.id}</div>
+                <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:13,color:th.textMuted}}>{r.id}</div>
               </div>
               <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                <span style={{fontSize:11,color:th.textMuted,background:th.bgAlt,padding:"4px 10px",borderRadius:6,fontWeight:500}}>{r.model}</span>
-                <span style={{fontSize:11,fontWeight:600,padding:"4px 10px",borderRadius:6,
+                <span style={{fontSize:13,color:th.textMuted,background:th.bgAlt,padding:"4px 10px",borderRadius:6,fontWeight:500}}>{r.model}</span>
+                <span style={{fontSize:13,fontWeight:600,padding:"4px 10px",borderRadius:6,
                   color:r.status==="online"?th.success:r.status==="warning"?th.warning:th.danger,
                   background:r.status==="online"?th.successBg:r.status==="warning"?th.warningBg:th.dangerBg,
                 }}>{r.status==="online"?"Online":r.status==="warning"?"Needs Fix":"Offline"}</span>
               </div>
               <div style={{display:"flex",gap:6}}>
                 {r.role!=="Leader + Worker"&&(
-                  <button onClick={()=>toggleStatus(r.id)} style={{padding:"6px 12px",borderRadius:7,border:`1px solid ${th.border}`,background:th.bgAlt,color:th.textSecondary,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+                  <button onClick={()=>toggleStatus(r.id)} style={{padding:"6px 12px",borderRadius:7,border:`1px solid ${th.border}`,background:th.bgAlt,color:th.textSecondary,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
                     {r.status==="offline"?"Enable":"Disable"}
                   </button>
                 )}
                 {r.role!=="Leader + Worker"&&(
-                  <button onClick={()=>{if(confirm(`Remove ${r.label} from the cluster?`))removeReactor(r.id)}} style={{padding:"6px 12px",borderRadius:7,border:`1px solid ${th.danger}30`,background:th.dangerBg,color:th.danger,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+                  <button onClick={()=>{if(confirm(`Remove ${r.label} from the cluster?`))removeReactor(r.id)}} style={{padding:"6px 12px",borderRadius:7,border:`1px solid ${th.danger}30`,background:th.dangerBg,color:th.danger,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
                     Remove
                   </button>
                 )}
               </div>
-              {r.status==="warning"&&<div style={{width:"100%",padding:"8px 12px",borderRadius:8,background:th.warningBg,border:`1px solid ${th.warning}20`,fontSize:11,color:th.warning,fontWeight:500,marginTop:4}}>⚠ Photodiode cables swapped + stir bar check needed in lab</div>}
+              {r.status==="warning"&&<div style={{width:"100%",padding:"8px 12px",borderRadius:8,background:th.warningBg,border:`1px solid ${th.warning}20`,fontSize:13,color:th.warning,fontWeight:500,marginTop:4}}>⚠ Photodiode cables swapped + stir bar check needed in lab</div>}
             </div>
           ))}
         </div>
 
         {/* How to add guide */}
         <div style={{marginTop:24,padding:"20px 24px",background:th.surface,border:`1px solid ${th.border}`,borderRadius:14,boxShadow:th.shadow}}>
-          <h3 style={{margin:"0 0 14px",fontSize:15,fontWeight:700,color:th.text}}>How to add a new bioreactor</h3>
-          <div style={{fontSize:13,color:th.textSecondary,lineHeight:1.8}}>
+          <h3 style={{margin:"0 0 14px",fontSize:17,fontWeight:700,color:th.text}}>How to add a new bioreactor</h3>
+          <div style={{fontSize:15,color:th.textSecondary,lineHeight:1.8}}>
             <p style={{margin:"0 0 10px"}}><strong style={{color:th.text}}>1.</strong> Flash SD card with <strong>Worker</strong> image using Raspberry Pi Imager — give it a unique hostname</p>
-            <p style={{margin:"0 0 10px"}}><strong style={{color:th.text}}>2.</strong> Set the same Wi-Fi network as your Leader (<code style={{background:th.bgAlt,padding:"2px 8px",borderRadius:5,fontFamily:"'JetBrains Mono',monospace",fontSize:11,color:th.accent}}>oliveirapioreactor01</code>)</p>
+            <p style={{margin:"0 0 10px"}}><strong style={{color:th.text}}>2.</strong> Set the same Wi-Fi network as your Leader (<code style={{background:th.bgAlt,padding:"2px 8px",borderRadius:5,fontFamily:"'JetBrains Mono',monospace",fontSize:13,color:th.accent}}>oliveirapioreactor01</code>)</p>
             <p style={{margin:"0 0 10px"}}><strong style={{color:th.text}}>3.</strong> Power it on and wait for the blue LED blink</p>
-            <p style={{margin:"0 0 10px"}}><strong style={{color:th.text}}>4.</strong> Click <strong>"+ Add Bioreactor"</strong> above, or add via terminal: <code style={{background:th.bgAlt,padding:"2px 8px",borderRadius:5,fontFamily:"'JetBrains Mono',monospace",fontSize:11,color:th.accent}}>pio workers add hostname</code></p>
+            <p style={{margin:"0 0 10px"}}><strong style={{color:th.text}}>4.</strong> Click <strong>"+ Add Bioreactor"</strong> above, or add via terminal: <code style={{background:th.bgAlt,padding:"2px 8px",borderRadius:5,fontFamily:"'JetBrains Mono',monospace",fontSize:13,color:th.accent}}>pio workers add hostname</code></p>
             <p style={{margin:0}}><strong style={{color:th.text}}>5.</strong> Run the Self-test from the Pioreactor web UI to verify all sensors are working</p>
           </div>
         </div>
@@ -533,11 +544,11 @@ export default function App(){
           <CS icon="📜" title="Dosing Event Log" desc="Full history of every pump action. Requires active pumps."/>
         </div>
         <div style={{marginTop:20,padding:"20px 24px",background:th.surface,border:`1px solid ${th.border}`,borderRadius:14,boxShadow:th.shadow}}>
-          <h3 style={{margin:"0 0 12px",fontSize:15,fontWeight:700,color:th.text}}>How to activate pumps</h3>
-          <div style={{fontSize:13,color:th.textSecondary,lineHeight:1.7}}>
+          <h3 style={{margin:"0 0 12px",fontSize:17,fontWeight:700,color:th.text}}>How to activate pumps</h3>
+          <div style={{fontSize:15,color:th.textSecondary,lineHeight:1.7}}>
             <p style={{margin:"0 0 10px"}}><strong style={{color:th.text}}>1.</strong> Connect peristaltic pumps to PWM channels on the Pioreactor HAT</p>
             <p style={{margin:"0 0 10px"}}><strong style={{color:th.text}}>2.</strong> Break in — run 10 min with water to loosen tubing</p>
-            <p style={{margin:"0 0 10px"}}><strong style={{color:th.text}}>3.</strong> Calibrate: <code style={{background:th.bgAlt,padding:"2px 8px",borderRadius:5,fontFamily:"'JetBrains Mono',monospace",fontSize:11,color:th.accent}}>pio calibrations run --device media_pump</code></p>
+            <p style={{margin:"0 0 10px"}}><strong style={{color:th.text}}>3.</strong> Calibrate: <code style={{background:th.bgAlt,padding:"2px 8px",borderRadius:5,fontFamily:"'JetBrains Mono',monospace",fontSize:13,color:th.accent}}>pio calibrations run --device media_pump</code></p>
             <p style={{margin:0}}><strong style={{color:th.text}}>4.</strong> Start dosing automation (Turbidostat or Chemostat)</p>
           </div>
         </div>
@@ -545,7 +556,7 @@ export default function App(){
 
       {page==="alerts"&&<div style={{padding:"24px"}}><CS icon="🔔" title="Smart Alerts" desc="Configure thresholds for temperature, OD, and pump failures. Define rules like 'if temp > 38°C, alert'."/></div>}
 
-      <div style={{padding:"20px 24px",borderTop:`1px solid ${th.borderLight}`,textAlign:"center",fontSize:11,color:th.textMuted}}>Oliveira Lab · Bioreactor Dashboard v0.1 · Built by Bukola · {new Date().getFullYear()}</div>
+      <div style={{padding:"20px 24px",borderTop:`1px solid ${th.borderLight}`,textAlign:"center",fontSize:13,color:th.textMuted}}>Oliveira Lab · Bioreactor Dashboard v0.1 · Built by Bukola · {new Date().getFullYear()}</div>
     </div>
     <AddReactorModal open={showAddReactor} onClose={()=>setShowAddReactor(false)} onAdd={addReactor} th={th}/>
     <style>{`@keyframes spin{to{transform:rotate(360deg)}}*{box-sizing:border-box;margin:0}::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:${th.border};border-radius:3px}`}</style>
