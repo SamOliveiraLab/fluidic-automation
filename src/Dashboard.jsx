@@ -109,7 +109,18 @@ const usePioreactorData = () => {
   const [stirData, setStirData] = useState({ data: [], keys: [] });
   const [growthData, setGrowthData] = useState({ data: [], keys: [] });
   const [lastFetch, setLastFetch] = useState(null);
-  const statusOverridesRef = useRef({}); // Always-current override values for fetchAll to read
+
+  // Persist overrides to localStorage so they survive page refresh
+  const loadOverrides = () => {
+    try {
+      const saved = localStorage.getItem("pioreactor_status_overrides");
+      return saved ? JSON.parse(saved) : {};
+    } catch { return {}; }
+  };
+  const saveOverrides = (overrides) => {
+    try { localStorage.setItem("pioreactor_status_overrides", JSON.stringify(overrides)); } catch {}
+  };
+  const statusOverridesRef = useRef(loadOverrides());
 
   const fetchAll = useCallback(async () => {
     // 1. Fetch workers
@@ -194,6 +205,11 @@ const usePioreactorData = () => {
     await fetch(`${API_BASE}/api/workers/${encodeURIComponent(id)}`, {
       method: "DELETE",
     }).catch(() => {});
+    // Clean up any stored override
+    const newOverrides = { ...statusOverridesRef.current };
+    delete newOverrides[id];
+    statusOverridesRef.current = newOverrides;
+    saveOverrides(newOverrides);
     setReactors((prev) => prev.filter((r) => r.id !== id));
     fetchAll();
   };
@@ -204,15 +220,24 @@ const usePioreactorData = () => {
       const reactor = prev.find((r) => r.id === id);
       if (!reactor) return prev;
       const newStatus = reactor.status === "offline" ? "online" : "offline";
-      // Store override so auto-refresh doesn't revert it
-      statusOverridesRef.current = {
-        ...statusOverridesRef.current,
-        [id]: newStatus,
-      };
-      // Try API call (fire-and-forget)
+      // Update overrides — store "offline" overrides, remove "online" ones (API default)
+      const newOverrides = { ...statusOverridesRef.current };
+      if (newStatus === "offline") {
+        newOverrides[id] = "offline";
+      } else {
+        delete newOverrides[id];
+      }
+      statusOverridesRef.current = newOverrides;
+      saveOverrides(newOverrides);
+      // Try API call (fire-and-forget) — try both endpoint formats
       const newActive = newStatus === "online" ? 1 : 0;
-      fetch(`${API_BASE}/api/workers/${encodeURIComponent(id)}/is_active`, {
+      fetch(`${API_BASE}/api/workers/${encodeURIComponent(id)}`, {
         method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ is_active: newActive }),
+      }).catch(() => {});
+      fetch(`${API_BASE}/api/workers/${encodeURIComponent(id)}/is_active`, {
+        method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ is_active: newActive }),
       }).catch(() => {});
