@@ -1636,6 +1636,7 @@ export default function App() {
           padding: "20px 0",
           display: "flex",
           flexDirection: "column",
+          overflowY: "auto",
           transform: sidebar
             ? "translateX(0)"
             : typeof window !== "undefined" && window.innerWidth < 768
