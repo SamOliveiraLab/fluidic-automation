@@ -10,9 +10,24 @@ import {
 } from "recharts";
 
 /* ═══════════════════════════════════════════════════
-   CONFIGURATION - Change this to your Leader's address
+   CONFIGURATION - Pioreactor Leader address
+   In dev: Vite proxy handles /api → Pioreactor
+   In production: browser calls Pioreactor directly
    ═══════════════════════════════════════════════════ */
-const API_BASE = ""; // Vite proxy handles routing to Pioreactor (see vite.config.js)
+const DEFAULT_PIOREACTOR_URL = "http://oliveirapioreactor01.local";
+const getApiBase = () => {
+  // In dev mode, Vite proxy handles it
+  if (typeof import.meta !== "undefined" && import.meta.env?.DEV) return "";
+  // In production, read from localStorage or use default
+  try {
+    return localStorage.getItem("pioreactor_url") || DEFAULT_PIOREACTOR_URL;
+  } catch { return DEFAULT_PIOREACTOR_URL; }
+};
+const setApiBase = (url) => {
+  try { localStorage.setItem("pioreactor_url", url); } catch {}
+};
+
+let API_BASE = getApiBase();
 
 const REFRESH_INTERVAL = 10000; // 10 seconds
 
@@ -1338,6 +1353,8 @@ export default function App() {
   const [sidebar, setSidebar] = useState(false);
   const [page, setPage] = useState("overview");
   const [showAddReactor, setShowAddReactor] = useState(false);
+  const [pioUrl, setPioUrl] = useState(getApiBase());
+  const [pioUrlInput, setPioUrlInput] = useState(pioUrl);
   const th = themes[mode];
 
   // Live API data
@@ -1754,6 +1771,73 @@ export default function App() {
           </button>
           {showS && (
             <div style={{ padding: "12px 14px" }}>
+              <div
+                style={{
+                  fontSize: 15,
+                  color: th.textMuted,
+                  fontWeight: 600,
+                  marginBottom: 8,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.08em",
+                }}
+              >
+                Pioreactor Address
+              </div>
+              <div style={{ marginBottom: 14 }}>
+                <input
+                  value={pioUrlInput}
+                  onChange={(e) => setPioUrlInput(e.target.value)}
+                  placeholder="http://oliveirapioreactor01.local"
+                  style={{
+                    width: "100%",
+                    padding: "8px 10px",
+                    borderRadius: 7,
+                    border: `1px solid ${th.border}`,
+                    background: th.bgAlt,
+                    color: th.text,
+                    fontSize: 13,
+                    fontFamily: "'JetBrains Mono',monospace",
+                    outline: "none",
+                    boxSizing: "border-box",
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      const url = pioUrlInput.trim().replace(/\/+$/, "");
+                      API_BASE = url;
+                      setApiBase(url);
+                      setPioUrl(url);
+                      refresh();
+                    }
+                  }}
+                />
+                <button
+                  onClick={() => {
+                    const url = pioUrlInput.trim().replace(/\/+$/, "");
+                    API_BASE = url;
+                    setApiBase(url);
+                    setPioUrl(url);
+                    refresh();
+                  }}
+                  style={{
+                    width: "100%",
+                    marginTop: 6,
+                    padding: "7px 0",
+                    borderRadius: 7,
+                    border: "none",
+                    background: th.accent,
+                    color: "#fff",
+                    fontSize: 14,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                  }}
+                >
+                  Connect
+                </button>
+                <div style={{ fontSize: 12, color: th.textMuted, marginTop: 6, lineHeight: 1.5 }}>
+                  {connected ? "✓ Connected" : "Enter your Pioreactor's address and click Connect. Must be on the same WiFi."}
+                </div>
+              </div>
               <div
                 style={{
                   fontSize: 15,
