@@ -12,13 +12,11 @@ import {
 /* ═══════════════════════════════════════════════════
    CONFIGURATION - Pioreactor Leader address
    In dev: Vite proxy handles /api → Pioreactor
-   In production: browser calls Pioreactor directly
+   In production (Vercel): browser calls /api/proxy,
+   which forwards to the HTTP Pioreactor URL.
    ═══════════════════════════════════════════════════ */
 const DEFAULT_PIOREACTOR_URL = "http://oliveirapioreactor01.local";
 const getApiBase = () => {
-  // In dev mode, Vite proxy handles it
-  if (typeof import.meta !== "undefined" && import.meta.env?.DEV) return "";
-  // In production, read from localStorage or use default
   try {
     return localStorage.getItem("pioreactor_url") || DEFAULT_PIOREACTOR_URL;
   } catch { return DEFAULT_PIOREACTOR_URL; }
@@ -27,7 +25,15 @@ const setApiBase = (url) => {
   try { localStorage.setItem("pioreactor_url", url); } catch {}
 };
 
-let API_BASE = getApiBase();
+const buildApiUrl = (path) => {
+  // In dev, use Vite proxy: frontend calls /api/* directly
+  if (typeof import.meta !== "undefined" && import.meta.env?.DEV) {
+    return path;
+  }
+  // In production, go through Vercel proxy function
+  const base = getApiBase();
+  return `/api/proxy?base=${encodeURIComponent(base)}&path=${encodeURIComponent(path)}`;
+};
 
 const REFRESH_INTERVAL = 10000; // 10 seconds
 
@@ -36,7 +42,7 @@ const REFRESH_INTERVAL = 10000; // 10 seconds
    ═══════════════════════════════════════════════════ */
 const api = async (path) => {
   try {
-    const res = await fetch(`${API_BASE}${path}`);
+    const res = await fetch(buildApiUrl(path));
     if (!res.ok) throw new Error(res.statusText);
     return await res.json();
   } catch (e) {
@@ -217,7 +223,7 @@ const usePioreactorData = () => {
 
   // Remove reactor via API
   const removeReactor = async (id) => {
-    await fetch(`${API_BASE}/api/workers/${encodeURIComponent(id)}`, {
+    await fetch(buildApiUrl(`/api/workers/${encodeURIComponent(id)}`), {
       method: "DELETE",
     }).catch(() => {});
     // Clean up any stored override
@@ -246,12 +252,12 @@ const usePioreactorData = () => {
       saveOverrides(newOverrides);
       // Try API call (fire-and-forget) — try both endpoint formats
       const newActive = newStatus === "online" ? 1 : 0;
-      fetch(`${API_BASE}/api/workers/${encodeURIComponent(id)}`, {
+      fetch(buildApiUrl(`/api/workers/${encodeURIComponent(id)}`), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ is_active: newActive }),
       }).catch(() => {});
-      fetch(`${API_BASE}/api/workers/${encodeURIComponent(id)}/is_active`, {
+      fetch(buildApiUrl(`/api/workers/${encodeURIComponent(id)}/is_active`), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ is_active: newActive }),
@@ -269,7 +275,7 @@ const usePioreactorData = () => {
     
     const results = await Promise.allSettled(
       onlineReactors.map(r =>
-        fetch(`${API_BASE}/api/workers/${encodeURIComponent(r.id)}/jobs/run/job_name/${jobName}/experiments/${expEnc}`, {
+        fetch(buildApiUrl(`/api/workers/${encodeURIComponent(r.id)}/jobs/run/job_name/${jobName}/experiments/${expEnc}`), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ options }),
@@ -289,7 +295,7 @@ const usePioreactorData = () => {
     const onlineReactors = reactors.filter(r => r.status === "online");
     await Promise.allSettled(
       onlineReactors.map(r =>
-        fetch(`${API_BASE}/api/workers/${encodeURIComponent(r.id)}/jobs/stop/job_name/${jobName}/experiments/${expEnc}`, {
+        fetch(buildApiUrl(`/api/workers/${encodeURIComponent(r.id)}/jobs/stop/job_name/${jobName}/experiments/${expEnc}`), {
           method: "POST",
         })
       )
@@ -1804,7 +1810,6 @@ export default function App() {
                   onKeyDown={(e) => {
                     if (e.key === "Enter") {
                       const url = pioUrlInput.trim().replace(/\/+$/, "");
-                      API_BASE = url;
                       setApiBase(url);
                       setPioUrl(url);
                       refresh();
@@ -1814,7 +1819,6 @@ export default function App() {
                 <button
                   onClick={() => {
                     const url = pioUrlInput.trim().replace(/\/+$/, "");
-                    API_BASE = url;
                     setApiBase(url);
                     setPioUrl(url);
                     refresh();
