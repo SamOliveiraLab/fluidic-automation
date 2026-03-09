@@ -129,6 +129,7 @@ const usePioreactorData = () => {
   const [tempData, setTempData] = useState({ data: [], keys: [] });
   const [stirData, setStirData] = useState({ data: [], keys: [] });
   const [growthData, setGrowthData] = useState({ data: [], keys: [] });
+  const [logs, setLogs] = useState([]);
   const [lastFetch, setLastFetch] = useState(null);
 
   // Persist overrides to localStorage so they survive page refresh
@@ -189,6 +190,13 @@ const usePioreactorData = () => {
     setTempData(transformTimeSeries(tempRaw, workers));
     setStirData(transformTimeSeries(stirRaw, workers));
     setGrowthData(transformTimeSeries(growthRaw, workers));
+
+    // 4. Fetch logs
+    const logsRaw = await api(`/api/experiments/${expName}/logs`);
+    if (Array.isArray(logsRaw)) {
+      setLogs(logsRaw.slice(0, 200));
+    }
+
     setLastFetch(new Date());
     setLoading(false);
   }, []);
@@ -313,6 +321,7 @@ const usePioreactorData = () => {
     tempData,
     stirData,
     growthData,
+    logs,
     addReactor,
     removeReactor,
     toggleStatus,
@@ -1379,6 +1388,7 @@ export default function App() {
     toggleStatus,
     startJob,
     stopJob,
+    logs,
     refresh,
   } = usePioreactorData();
 
@@ -1400,6 +1410,7 @@ export default function App() {
     { id: "stirring", icon: "↻", label: "Stirring" },
     { id: "growth", icon: "↗", label: "Growth Rate" },
     { id: "pumps", icon: "⬡", label: "Pump Control" },
+    { id: "logs", icon: "☰", label: "Logs" },
     { id: "alerts", icon: "△", label: "Alerts" },
   ];
 
@@ -2531,6 +2542,275 @@ export default function App() {
                   automation (Turbidostat or Chemostat)
                 </p>
               </div>
+            </div>
+          </div>
+        )}
+
+        {page === "logs" && (
+          <div style={{ padding: "24px" }}>
+            <div
+              style={{
+                background: th.surface,
+                border: `1px solid ${th.border}`,
+                borderRadius: 16,
+                boxShadow: th.shadow,
+                overflow: "hidden",
+              }}
+            >
+              <div
+                style={{
+                  padding: "18px 22px",
+                  borderBottom: `1px solid ${th.borderLight}`,
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  flexWrap: "wrap",
+                  gap: 12,
+                }}
+              >
+                <div>
+                  <h2
+                    style={{
+                      margin: 0,
+                      fontSize: 20,
+                      fontWeight: 700,
+                      color: th.text,
+                    }}
+                  >
+                    Pioreactor Logs
+                  </h2>
+                  <p
+                    style={{
+                      margin: "4px 0 0",
+                      fontSize: 16,
+                      color: th.textMuted,
+                    }}
+                  >
+                    {logs.length
+                      ? `${logs.length} entries · Auto-refreshes every ${REFRESH_INTERVAL / 1000}s`
+                      : connected
+                        ? "No log entries yet"
+                        : "Connect to Pioreactor to view logs"}
+                  </p>
+                </div>
+                <button
+                  onClick={refresh}
+                  style={{
+                    padding: "6px 14px",
+                    borderRadius: 7,
+                    background: th.bgAlt,
+                    border: `1px solid ${th.border}`,
+                    cursor: "pointer",
+                    fontSize: 15,
+                    fontWeight: 600,
+                    color: th.textSecondary,
+                    fontFamily: "inherit",
+                  }}
+                >
+                  ↻ Refresh
+                </button>
+              </div>
+              {logs.length > 0 ? (
+                <div
+                  style={{
+                    maxHeight: "70vh",
+                    overflowY: "auto",
+                  }}
+                >
+                  {logs.map((log, i) => {
+                    const level = (
+                      log.level ||
+                      log.log_level ||
+                      "INFO"
+                    ).toUpperCase();
+                    const isErr =
+                      level === "ERROR" || level === "CRITICAL";
+                    const isWarn = level === "WARNING" || level === "WARN";
+                    const isDebug = level === "DEBUG";
+                    const levelColor = isErr
+                      ? th.danger
+                      : isWarn
+                        ? th.warning
+                        : isDebug
+                          ? th.textMuted
+                          : th.accent;
+                    const levelBg = isErr
+                      ? th.dangerBg
+                      : isWarn
+                        ? th.warningBg
+                        : isDebug
+                          ? th.bgAlt
+                          : th.accentLight;
+                    const ts = log.timestamp || log.created_at || "";
+                    const time = ts
+                      ? new Date(ts).toLocaleString("en-GB", {
+                          month: "short",
+                          day: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                          second: "2-digit",
+                        })
+                      : "";
+                    const source =
+                      log.task ||
+                      log.source ||
+                      log.job_name ||
+                      "";
+                    const unit =
+                      log.pioreactor_unit || log.unit || "";
+                    const msg =
+                      log.message || log.msg || log.log || "";
+
+                    return (
+                      <div
+                        key={i}
+                        style={{
+                          padding: "12px 22px",
+                          borderBottom:
+                            i < logs.length - 1
+                              ? `1px solid ${th.borderLight}`
+                              : "none",
+                          display: "flex",
+                          gap: 12,
+                          alignItems: "flex-start",
+                          background:
+                            isErr
+                              ? `${th.danger}06`
+                              : isWarn
+                                ? `${th.warning}06`
+                                : "transparent",
+                        }}
+                      >
+                        <div
+                          style={{
+                            flex: "0 0 auto",
+                            marginTop: 2,
+                          }}
+                        >
+                          <span
+                            style={{
+                              display: "inline-block",
+                              fontSize: 11,
+                              fontWeight: 700,
+                              letterSpacing: "0.05em",
+                              padding: "2px 7px",
+                              borderRadius: 5,
+                              color: levelColor,
+                              background: levelBg,
+                              fontFamily:
+                                "'JetBrains Mono',monospace",
+                              minWidth: 52,
+                              textAlign: "center",
+                            }}
+                          >
+                            {level}
+                          </span>
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div
+                            style={{
+                              fontSize: 15,
+                              color: th.text,
+                              lineHeight: 1.5,
+                              wordBreak: "break-word",
+                            }}
+                          >
+                            {msg}
+                          </div>
+                          <div
+                            style={{
+                              display: "flex",
+                              gap: 12,
+                              marginTop: 4,
+                              flexWrap: "wrap",
+                            }}
+                          >
+                            {time && (
+                              <span
+                                style={{
+                                  fontSize: 13,
+                                  color: th.textMuted,
+                                  fontFamily:
+                                    "'JetBrains Mono',monospace",
+                                }}
+                              >
+                                {time}
+                              </span>
+                            )}
+                            {source && (
+                              <span
+                                style={{
+                                  fontSize: 13,
+                                  color: th.accent,
+                                  background: th.accentLight,
+                                  padding: "1px 7px",
+                                  borderRadius: 4,
+                                  fontWeight: 600,
+                                }}
+                              >
+                                {source}
+                              </span>
+                            )}
+                            {unit && (
+                              <span
+                                style={{
+                                  fontSize: 13,
+                                  color: th.textMuted,
+                                  background: th.bgAlt,
+                                  padding: "1px 7px",
+                                  borderRadius: 4,
+                                }}
+                              >
+                                {unit}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div
+                  style={{
+                    padding: "48px 24px",
+                    textAlign: "center",
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: 40,
+                      marginBottom: 12,
+                      opacity: 0.35,
+                    }}
+                  >
+                    ☰
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 17,
+                      fontWeight: 600,
+                      color: th.textSecondary,
+                      marginBottom: 6,
+                    }}
+                  >
+                    No logs available
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 16,
+                      color: th.textMuted,
+                      lineHeight: 1.6,
+                      maxWidth: 360,
+                      margin: "0 auto",
+                    }}
+                  >
+                    {connected
+                      ? "Logs will appear here when Pioreactor activities are running."
+                      : "Connect to your Pioreactor to see activity logs."}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
