@@ -8,7 +8,7 @@ export default defineConfig({
     open: true,
     proxy: {
       '/api': {
-        target: 'http://oliveirapioreactor01.local',
+        target: 'https://controlling-adds-speak-stop.trycloudflare.com',
         changeOrigin: true,
         secure: false,
       }

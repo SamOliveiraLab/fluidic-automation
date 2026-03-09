@@ -15,7 +15,7 @@ import {
    In production (Vercel): browser calls /api/proxy,
    which forwards to the HTTP Pioreactor URL.
    ═══════════════════════════════════════════════════ */
-const DEFAULT_PIOREACTOR_URL = "http://oliveirapioreactor01.local";
+const DEFAULT_PIOREACTOR_URL = "https://controlling-adds-speak-stop.trycloudflare.com";
 const getApiBase = () => {
   try {
     return localStorage.getItem("pioreactor_url") || DEFAULT_PIOREACTOR_URL;
@@ -1805,7 +1805,7 @@ export default function App() {
                 <input
                   value={pioUrlInput}
                   onChange={(e) => setPioUrlInput(e.target.value)}
-                  placeholder="http://oliveirapioreactor01.local"
+                  placeholder="https://controlling-adds-speak-stop.trycloudflare.com"
                   style={{
                     width: "100%",
                     padding: "8px 10px",
