@@ -15,7 +15,8 @@ import {
    In production (Vercel): browser calls /api/proxy,
    which forwards to the HTTP Pioreactor URL.
    ═══════════════════════════════════════════════════ */
-const DEFAULT_PIOREACTOR_URL = "https://controlling-adds-speak-stop.trycloudflare.com";
+const DEFAULT_PIOREACTOR_URL =
+  import.meta.env.VITE_PIOREACTOR_URL || "https://controlling-adds-speak-stop.trycloudflare.com";
 const getApiBase = () => {
   try {
     return localStorage.getItem("pioreactor_url") || DEFAULT_PIOREACTOR_URL;
@@ -40,9 +41,17 @@ const REFRESH_INTERVAL = 10000; // 10 seconds
 /* ═══════════════════════════════════════════════════
    API HELPERS
    ═══════════════════════════════════════════════════ */
+const NGROK_HEADERS = { "ngrok-skip-browser-warning": "1" };
+
+const pioFetch = (url, opts = {}) =>
+  fetch(url, {
+    ...opts,
+    headers: { ...NGROK_HEADERS, ...opts.headers },
+  });
+
 const api = async (path) => {
   try {
-    const res = await fetch(buildApiUrl(path));
+    const res = await pioFetch(buildApiUrl(path));
     if (!res.ok) throw new Error(res.statusText);
     return await res.json();
   } catch (e) {
@@ -231,7 +240,7 @@ const usePioreactorData = () => {
 
   // Remove reactor via API
   const removeReactor = async (id) => {
-    await fetch(buildApiUrl(`/api/workers/${encodeURIComponent(id)}`), {
+    await pioFetch(buildApiUrl(`/api/workers/${encodeURIComponent(id)}`), {
       method: "DELETE",
     }).catch(() => {});
     // Clean up any stored override
@@ -260,12 +269,12 @@ const usePioreactorData = () => {
       saveOverrides(newOverrides);
       // Try API call (fire-and-forget) — try both endpoint formats
       const newActive = newStatus === "online" ? 1 : 0;
-      fetch(buildApiUrl(`/api/workers/${encodeURIComponent(id)}`), {
+      pioFetch(buildApiUrl(`/api/workers/${encodeURIComponent(id)}`), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ is_active: newActive }),
       }).catch(() => {});
-      fetch(buildApiUrl(`/api/workers/${encodeURIComponent(id)}/is_active`), {
+      pioFetch(buildApiUrl(`/api/workers/${encodeURIComponent(id)}/is_active`), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ is_active: newActive }),
@@ -283,7 +292,7 @@ const usePioreactorData = () => {
     
     const results = await Promise.allSettled(
       onlineReactors.map(r =>
-        fetch(buildApiUrl(`/api/workers/${encodeURIComponent(r.id)}/jobs/run/job_name/${jobName}/experiments/${expEnc}`), {
+        pioFetch(buildApiUrl(`/api/workers/${encodeURIComponent(r.id)}/jobs/run/job_name/${jobName}/experiments/${expEnc}`), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ options }),
@@ -303,7 +312,7 @@ const usePioreactorData = () => {
     const onlineReactors = reactors.filter(r => r.status === "online");
     await Promise.allSettled(
       onlineReactors.map(r =>
-        fetch(buildApiUrl(`/api/workers/${encodeURIComponent(r.id)}/jobs/stop/job_name/${jobName}/experiments/${expEnc}`), {
+        pioFetch(buildApiUrl(`/api/workers/${encodeURIComponent(r.id)}/jobs/stop/job_name/${jobName}/experiments/${expEnc}`), {
           method: "POST",
         })
       )
@@ -1805,7 +1814,7 @@ export default function App() {
                 <input
                   value={pioUrlInput}
                   onChange={(e) => setPioUrlInput(e.target.value)}
-                  placeholder="https://controlling-adds-speak-stop.trycloudflare.com"
+                  placeholder={DEFAULT_PIOREACTOR_URL}
                   style={{
                     width: "100%",
                     padding: "8px 10px",
