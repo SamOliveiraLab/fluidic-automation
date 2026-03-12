@@ -1,0 +1,26 @@
+# Cloudflare Tunnel - exposes dashboard at a public URL
+# Copy to Pioreactor with:
+#   scp cloudflared-dashboard.service pioreactor@oliveirapioreactor01.local:~
+# Then on the Pioreactor:
+#   sudo cp ~/cloudflared-dashboard.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable cloudflared-dashboard
+#   sudo systemctl start cloudflared-dashboard
+#
+# To see the tunnel URL after boot:
+#   journalctl -u cloudflared-dashboard -n 30 | grep trycloudflare
+
+[Unit]
+Description=Cloudflare Tunnel for Bioreactor Dashboard
+After=fluidic-dashboard.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pioreactor
+ExecStart=/usr/bin/cloudflared tunnel --url http://localhost:3010
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -136,7 +136,6 @@ const usePioreactorData = () => {
   const [reactors, setReactors] = useState([]);
   const [odData, setOdData] = useState({ data: [], keys: [] });
   const [tempData, setTempData] = useState({ data: [], keys: [] });
-  const [stirData, setStirData] = useState({ data: [], keys: [] });
   const [growthData, setGrowthData] = useState({ data: [], keys: [] });
   const [logs, setLogs] = useState([]);
   const [lastFetch, setLastFetch] = useState(null);
@@ -182,13 +181,10 @@ const usePioreactorData = () => {
     const expName = encodeURIComponent(latestExp.experiment);
 
     // 3. Fetch all time series in parallel
-    const [odRaw, tempRaw, stirRaw, growthRaw] = await Promise.all([
+    const [odRaw, tempRaw, growthRaw] = await Promise.all([
       api(`/api/experiments/${expName}/time_series/od_readings?filter_mod_N=1`),
       api(
         `/api/experiments/${expName}/time_series/temperature_readings?filter_mod_N=1`,
-      ),
-      api(
-        `/api/experiments/${expName}/time_series/stirring_rates?filter_mod_N=1`,
       ),
       api(
         `/api/experiments/${expName}/time_series/growth_rates?filter_mod_N=1`,
@@ -197,7 +193,6 @@ const usePioreactorData = () => {
 
     setOdData(transformTimeSeries(odRaw, workers));
     setTempData(transformTimeSeries(tempRaw, workers));
-    setStirData(transformTimeSeries(stirRaw, workers));
     setGrowthData(transformTimeSeries(growthRaw, workers));
 
     // 4. Fetch logs
@@ -328,7 +323,6 @@ const usePioreactorData = () => {
     lastFetch,
     odData,
     tempData,
-    stirData,
     growthData,
     logs,
     addReactor,
@@ -993,7 +987,6 @@ const Chart = ({
 /* ─── INTERPRETATIONS ─── */
 const I_OD = `Both bioreactors are currently running with sterile water - no biological organisms are present.\n\nBioreactor 01 (OD ~0.206–0.208) shows a stable baseline with a notable downward drift beginning around 02:30 UTC, dropping from ~0.2075 to ~0.2058. This is not biological - it's almost certainly caused by ambient temperature cooling. As water cools, its refractive index changes slightly, which shifts the OD reading.\n\nBioreactor 02 (OD ~0.005) is reading near-zero, confirming very clear water with minimal light scatter.\n\nKey takeaway: Both sensors are working correctly. When you introduce a culture, you'll see OD begin climbing from these baselines. The temperature-driven drift tells you to run Temperature Automation for precise measurements.`;
 const I_TEMP = `No temperature data is currently being collected.\n\nTo start: Pioreactor UI → Control all Pioreactors → Temperature Automation → Thermostat → 30°C.\n\nThis works with water. You'll see temperature climb from room temp to target, then hold steady. Temperature data is critical because it directly affects OD readings.`;
-const I_STIR = `No stirring data is currently being collected.\n\nStirring should be running if OD readings are active. Check that the Stirring activity is started in the Pioreactor UI.\n\nA sudden drop to 0 RPM means the stir bar detached - the culture stops being mixed, causing sedimentation and inaccurate OD readings.`;
 const I_GR = `No growth rate data is currently being collected.\n\nGrowth rate requires the Growth Rate activity AND actual organisms. With sterile water, it will always be zero.\n\nWith real organisms: expect yeast in YPD at 30°C to show a doubling time of ~90 minutes during exponential phase.`;
 
 /* ─── ADD REACTOR MODAL ─── */
@@ -1390,7 +1383,6 @@ export default function App() {
     lastFetch,
     odData,
     tempData,
-    stirData,
     growthData,
     addReactor,
     removeReactor,
@@ -1416,7 +1408,6 @@ export default function App() {
     { id: "reactors", icon: "⬢", label: "Bioreactors" },
     { id: "od", icon: "◎", label: "OD Readings" },
     { id: "temp", icon: "◈", label: "Temperature" },
-    { id: "stirring", icon: "↻", label: "Stirring" },
     { id: "growth", icon: "↗", label: "Growth Rate" },
     { id: "pumps", icon: "⬡", label: "Pump Control" },
     { id: "logs", icon: "☰", label: "Logs" },
@@ -1428,7 +1419,6 @@ export default function App() {
     ? odData.keys
     : [{ key: "r01", label: "Bioreactor 01", s: "R-01" }];
   const tempKeys = tempData.keys.length ? tempData.keys : odKeys;
-  const stirKeys = stirData.keys.length ? stirData.keys : odKeys;
   const growthKeys = growthData.keys.length ? growthData.keys : odKeys;
 
   // Dynamic colors for however many reactors exist
@@ -1492,30 +1482,6 @@ export default function App() {
       ? (starting.temperature_automation ? "Starting..." : "Start Temperature Automation →")
       : "Check Connection",
     onEmptyAction: connected ? () => handleStartJob("temperature_automation", { automation_name: "thermostat", target_temperature: 30 }) : undefined,
-  };
-  const stirP = {
-    title: "Stirring Rate (RPM)",
-    subtitle: stirData.data.length
-      ? `${stirData.data.length} readings · Live`
-      : "Not running",
-    data: stirData.data,
-    keys: stirKeys,
-    colors: palette,
-    yFmt: (v) => Math.round(v) + "",
-    csvCols: [
-      { key: "t", label: "Time" },
-      ...stirKeys.map((k) => ({ key: k.key, label: `${k.label}_RPM` })),
-    ],
-    csvName: "stirring",
-    interpTitle: "Stirring Interpretation",
-    interpText: I_STIR,
-    emptyIcon: "↻",
-    emptyTitle: "No stirring data",
-    emptySub: connected
-      ? "Stirring data appears when the Stirring activity is running."
-      : "Cannot reach Pioreactor API.",
-    emptyAction: connected ? (starting.stirring ? "Starting..." : "Start Stirring →") : "Check Connection",
-    onEmptyAction: connected ? () => handleStartJob("stirring", { target_rpm: "400" }) : undefined,
   };
   const grP = {
     title: "Growth Rate",
@@ -2150,7 +2116,6 @@ export default function App() {
             </div>
             <Chart th={th} {...odP} />
             <Chart th={th} {...tempP} />
-            <Chart th={th} {...stirP} />
             <Chart th={th} {...grP} />
           </div>
         )}
@@ -2453,11 +2418,6 @@ export default function App() {
         {page === "temp" && (
           <div style={{ padding: "24px" }}>
             <Chart th={th} {...tempP} />
-          </div>
-        )}
-        {page === "stirring" && (
-          <div style={{ padding: "24px" }}>
-            <Chart th={th} {...stirP} />
           </div>
         )}
         {page === "growth" && (

@@ -8,8 +8,11 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react()],
     server: {
-      port: 3000,
+      port: 3010,
+      strictPort: true,
       open: true,
+      // Allow Pioreactor hostname + Cloudflare tunnel (subdomain changes each time)
+      allowedHosts: ['oliveirapioreactor01.local', '.trycloudflare.com'],
       proxy: {
         '/api': {
           target: pioreactorUrl,
