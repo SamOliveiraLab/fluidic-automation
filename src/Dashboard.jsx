@@ -27,13 +27,11 @@ const setApiBase = (url) => {
 };
 
 const buildApiUrl = (path) => {
-  // In dev, use Vite proxy: frontend calls /api/* directly
-  if (typeof import.meta !== "undefined" && import.meta.env?.DEV) {
-    return path;
-  }
-  // In production, go through Vercel proxy function
   const base = getApiBase();
-  return `/api/proxy?base=${encodeURIComponent(base)}&path=${encodeURIComponent(path)}`;
+  if (typeof import.meta !== "undefined" && import.meta.env?.DEV) {
+    return path.startsWith("/api") ? path : `${base}${path}`;
+  }
+  return `${base}${path}`;
 };
 
 const REFRESH_INTERVAL = 10000; // 10 seconds
@@ -66,41 +64,44 @@ const api = async (path) => {
 const transformTimeSeries = (raw, workers) => {
   if (!raw?.series?.length || !raw?.data?.length) return { data: [], keys: [] };
 
-  // Build key mapping: series name → short key like "r01", "r02"
   const keyMap = {};
   const keys = [];
   raw.series.forEach((seriesName, i) => {
-    // seriesName is like "oliveirapioreactor01-2" - extract the unit name
     const unitName = seriesName.replace(/-\d+$/, "");
     const workerIdx = workers.findIndex((w) => w.id === unitName);
     const shortKey = `r${String(workerIdx + 1).padStart(2, "0")}`;
     const label = workers[workerIdx]?.label || unitName;
     keyMap[i] = shortKey;
-    keys.push({
-      key: shortKey,
-      label,
-      s: `R-${String(workerIdx + 1).padStart(2, "0")}`,
-    });
+    keys.push({ key: shortKey, label, s: `R-${String(workerIdx + 1).padStart(2, "0")}` });
   });
 
-  // Merge all series into one array keyed by timestamp
+  let minTs = Infinity, maxTs = -Infinity;
+  raw.data.forEach((s) => s.forEach((p) => {
+    const ms = new Date(p.x).getTime();
+    if (ms < minTs) minTs = ms;
+    if (ms > maxTs) maxTs = ms;
+  }));
+  const showDate = (maxTs - minTs) > 24 * 60 * 60 * 1000;
+
   const timeMap = {};
   raw.data.forEach((seriesData, seriesIdx) => {
     const key = keyMap[seriesIdx];
     seriesData.forEach((point) => {
-      const timeStr = new Date(point.x).toLocaleTimeString("en-GB", {
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-      if (!timeMap[timeStr]) timeMap[timeStr] = { t: timeStr };
-      timeMap[timeStr][key] = point.y;
+      const d = new Date(point.x);
+      const ts = d.getTime();
+      const timeStr = showDate
+        ? d.toLocaleDateString("en-GB", { month: "short", day: "numeric" }) + " " +
+          d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })
+        : d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+      const bucket = showDate ? `${ts}` : timeStr;
+      if (!timeMap[bucket]) timeMap[bucket] = { t: timeStr, _ts: ts };
+      timeMap[bucket][key] = point.y;
     });
   });
 
-  // Sort by time and sample down if too many points (keep ~200 max for performance)
-  let data = Object.values(timeMap).sort((a, b) => a.t.localeCompare(b.t));
-  if (data.length > 200) {
-    const step = Math.ceil(data.length / 200);
+  let data = Object.values(timeMap).sort((a, b) => a._ts - b._ts);
+  if (data.length > 300) {
+    const step = Math.ceil(data.length / 300);
     data = data.filter((_, i) => i % step === 0);
   }
 
@@ -139,6 +140,7 @@ const usePioreactorData = () => {
   const [growthData, setGrowthData] = useState({ data: [], keys: [] });
   const [logs, setLogs] = useState([]);
   const [lastFetch, setLastFetch] = useState(null);
+  const [timeRange, setTimeRange] = useState({ start: "", end: "" });
 
   // Persist overrides to localStorage so they survive page refresh
   const loadOverrides = () => {
@@ -180,15 +182,16 @@ const usePioreactorData = () => {
     setExperiment(latestExp);
     const expName = encodeURIComponent(latestExp.experiment);
 
-    // 3. Fetch all time series in parallel
+    // 3. Fetch all time series in parallel (with optional date range)
+    const tr = timeRange;
+    const rangeQ =
+      (tr.start ? `&start=${encodeURIComponent(tr.start)}` : "") +
+      (tr.end ? `&end=${encodeURIComponent(tr.end)}` : "");
+    const modN = !tr.start && !tr.end ? 1 : 5;
     const [odRaw, tempRaw, growthRaw] = await Promise.all([
-      api(`/api/experiments/${expName}/time_series/od_readings?filter_mod_N=1`),
-      api(
-        `/api/experiments/${expName}/time_series/temperature_readings?filter_mod_N=1`,
-      ),
-      api(
-        `/api/experiments/${expName}/time_series/growth_rates?filter_mod_N=1`,
-      ),
+      api(`/api/experiments/${expName}/time_series/od_readings?filter_mod_N=${modN}${rangeQ}`),
+      api(`/api/experiments/${expName}/time_series/temperature_readings?filter_mod_N=${modN}${rangeQ}`),
+      api(`/api/experiments/${expName}/time_series/growth_rates?filter_mod_N=${modN}${rangeQ}`),
     ]);
 
     setOdData(transformTimeSeries(odRaw, workers));
@@ -325,6 +328,8 @@ const usePioreactorData = () => {
     tempData,
     growthData,
     logs,
+    timeRange,
+    setTimeRange,
     addReactor,
     removeReactor,
     toggleStatus,
@@ -1363,6 +1368,57 @@ const AddReactorModal = ({ open, onClose, onAdd, th }) => {
   );
 };
 
+/* ─── TIME RANGE BAR ─── */
+const TimeRangeBar = ({ th, timeRange, setTimeRange, refresh }) => {
+  const presets = [
+    { label: "Live", start: "", end: "" },
+    { label: "1h", h: 1 },
+    { label: "6h", h: 6 },
+    { label: "24h", h: 24 },
+    { label: "3d", h: 72 },
+    { label: "7d", h: 168 },
+    { label: "30d", h: 720 },
+  ];
+  const isLive = !timeRange.start && !timeRange.end;
+  const applyPreset = (p) => {
+    if (!p.h) {
+      setTimeRange({ start: "", end: "" });
+    } else {
+      const end = new Date();
+      const start = new Date(end.getTime() - p.h * 3600000);
+      setTimeRange({ start: start.toISOString(), end: end.toISOString() });
+    }
+    setTimeout(refresh, 100);
+  };
+  const activePreset = isLive
+    ? "Live"
+    : presets.find((p) => {
+        if (!p.h || !timeRange.start) return false;
+        return Math.abs((new Date(timeRange.end) - new Date(timeRange.start)) - p.h * 3600000) < 60000;
+      })?.label || "custom";
+  const toLocal = (iso) => {
+    if (!iso) return "";
+    const d = new Date(iso);
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+  const fromLocal = (val) => (val ? new Date(val).toISOString() : "");
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 16, padding: "12px 16px", background: th.surface, border: `1px solid ${th.border}`, borderRadius: 12, boxShadow: th.shadow }}>
+      <span style={{ fontSize: 14, fontWeight: 600, color: th.textMuted, textTransform: "uppercase", letterSpacing: "0.06em", marginRight: 4 }}>Time Range</span>
+      {presets.map((p) => (
+        <button key={p.label} onClick={() => applyPreset(p)} style={{ padding: "5px 12px", borderRadius: 7, border: `1px solid ${activePreset === p.label ? th.accent : th.border}`, background: activePreset === p.label ? th.accent : th.bgAlt, color: activePreset === p.label ? "#fff" : th.textSecondary, fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{p.label}</button>
+      ))}
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: 8 }}>
+        <input type="datetime-local" value={toLocal(timeRange.start)} onChange={(e) => { const s = fromLocal(e.target.value); setTimeRange((prev) => ({ ...prev, start: s })); }} style={{ padding: "4px 8px", borderRadius: 6, border: `1px solid ${th.border}`, background: th.bgAlt, color: th.text, fontSize: 13, fontFamily: "'JetBrains Mono',monospace", outline: "none" }} />
+        <span style={{ color: th.textMuted, fontSize: 13 }}>→</span>
+        <input type="datetime-local" value={toLocal(timeRange.end)} onChange={(e) => { const en = fromLocal(e.target.value); setTimeRange((prev) => ({ ...prev, end: en })); }} style={{ padding: "4px 8px", borderRadius: 6, border: `1px solid ${th.border}`, background: th.bgAlt, color: th.text, fontSize: 13, fontFamily: "'JetBrains Mono',monospace", outline: "none" }} />
+        <button onClick={refresh} style={{ padding: "5px 12px", borderRadius: 7, border: `1px solid ${th.accent}`, background: th.accent, color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Go</button>
+      </div>
+    </div>
+  );
+};
+
 /* ─── MAIN ─── */
 export default function App() {
   const [mode, setMode] = useState("light");
@@ -1390,6 +1446,8 @@ export default function App() {
     startJob,
     stopJob,
     logs,
+    timeRange,
+    setTimeRange,
     refresh,
   } = usePioreactorData();
 
@@ -1983,6 +2041,7 @@ export default function App() {
 
         {page === "overview" && (
           <div style={{ padding: "24px" }}>
+            <TimeRangeBar th={th} timeRange={timeRange} setTimeRange={setTimeRange} refresh={refresh} />
             <div
               style={{
                 display: "grid",
@@ -2412,16 +2471,19 @@ export default function App() {
 
         {page === "od" && (
           <div style={{ padding: "24px" }}>
+            <TimeRangeBar th={th} timeRange={timeRange} setTimeRange={setTimeRange} refresh={refresh} />
             <Chart th={th} {...odP} />
           </div>
         )}
         {page === "temp" && (
           <div style={{ padding: "24px" }}>
+            <TimeRangeBar th={th} timeRange={timeRange} setTimeRange={setTimeRange} refresh={refresh} />
             <Chart th={th} {...tempP} />
           </div>
         )}
         {page === "growth" && (
           <div style={{ padding: "24px" }}>
+            <TimeRangeBar th={th} timeRange={timeRange} setTimeRange={setTimeRange} refresh={refresh} />
             <Chart th={th} {...grP} />
           </div>
         )}
