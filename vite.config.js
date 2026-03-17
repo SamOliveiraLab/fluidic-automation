@@ -12,7 +12,7 @@ export default defineConfig(({ mode }) => {
       strictPort: true,
       open: true,
       // Allow Pioreactor hostname + Cloudflare tunnel (subdomain changes each time)
-      allowedHosts: ['oliveirapioreactor01.local', '.trycloudflare.com'],
+      allowedHosts: ['oliveirapioreactor01.local', '.trycloudflare.com', '.ngrok-free.dev'],
       proxy: {
         '/api': {
           target: pioreactorUrl,
