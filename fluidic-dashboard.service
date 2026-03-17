@@ -1,0 +1,25 @@
+# Dashboard web app - runs on boot
+# Copy to Pioreactor with:
+#   scp fluidic-dashboard.service pioreactor@oliveirapioreactor01.local:~
+# Then on the Pioreactor:
+#   sudo cp ~/fluidic-dashboard.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable fluidic-dashboard
+#   sudo systemctl start fluidic-dashboard
+
+[Unit]
+Description=Oliveira Lab Bioreactor Dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pioreactor
+WorkingDirectory=/home/pioreactor/fluidic-automation
+Environment=VITE_PIOREACTOR_URL=http://oliveirapioreactor01.local
+ExecStart=/usr/bin/npm run dev -- --host 0.0.0.0 --port 3010
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

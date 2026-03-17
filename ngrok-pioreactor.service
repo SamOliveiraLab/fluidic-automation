@@ -1,0 +1,23 @@
+# systemd service to run ngrok tunnel on boot
+# Copy to Pioreactor with:
+#   scp ngrok-pioreactor.service pi@<pioreactor-ip>:~
+# Then on the Pioreactor:
+#   sudo cp ~/ngrok-pioreactor.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable ngrok-pioreactor
+#   sudo systemctl start ngrok-pioreactor
+
+[Unit]
+Description=ngrok tunnel for Pioreactor dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+ExecStart=/usr/local/bin/ngrok http 80 --domain=isopiestic-uneradicative-breana.ngrok-free.dev
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
