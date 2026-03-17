@@ -16,6 +16,7 @@ export default async function handler(req, res) {
         host: undefined,
         "x-forwarded-host": undefined,
         "x-vercel-deployment-url": undefined,
+        "ngrok-skip-browser-warning": "1",
       },
       body:
         req.method === "GET" || req.method === "HEAD"

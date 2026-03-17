@@ -15,7 +15,8 @@ import {
    In production (Vercel): browser calls /api/proxy,
    which forwards to the HTTP Pioreactor URL.
    ═══════════════════════════════════════════════════ */
-const DEFAULT_PIOREACTOR_URL = "https://controlling-adds-speak-stop.trycloudflare.com";
+const DEFAULT_PIOREACTOR_URL =
+  import.meta.env.VITE_PIOREACTOR_URL || "https://controlling-adds-speak-stop.trycloudflare.com";
 const getApiBase = () => {
   try {
     return localStorage.getItem("pioreactor_url") || DEFAULT_PIOREACTOR_URL;
@@ -26,13 +27,13 @@ const setApiBase = (url) => {
 };
 
 const buildApiUrl = (path) => {
-  const base = getApiBase();
-  // In dev, Vite proxy handles /api/* paths
+  // In dev, use Vite proxy: frontend calls /api/* directly
   if (typeof import.meta !== "undefined" && import.meta.env?.DEV) {
-    return path.startsWith("/api") ? path : `${base}${path}`;
+    return path;
   }
-  // In production, call the HTTPS tunnel URL directly
-  return `${base}${path}`;
+  // In production, go through Vercel proxy function
+  const base = getApiBase();
+  return `/api/proxy?base=${encodeURIComponent(base)}&path=${encodeURIComponent(path)}`;
 };
 
 const REFRESH_INTERVAL = 10000; // 10 seconds
@@ -40,9 +41,17 @@ const REFRESH_INTERVAL = 10000; // 10 seconds
 /* ═══════════════════════════════════════════════════
    API HELPERS
    ═══════════════════════════════════════════════════ */
+const NGROK_HEADERS = { "ngrok-skip-browser-warning": "1" };
+
+const pioFetch = (url, opts = {}) =>
+  fetch(url, {
+    ...opts,
+    headers: { ...NGROK_HEADERS, ...opts.headers },
+  });
+
 const api = async (path) => {
   try {
-    const res = await fetch(buildApiUrl(path));
+    const res = await pioFetch(buildApiUrl(path));
     if (!res.ok) throw new Error(res.statusText);
     return await res.json();
   } catch (e) {
@@ -53,13 +62,15 @@ const api = async (path) => {
 
 // Transform Pioreactor time_series response → chart-friendly format
 // API returns: { series: ["unit1-ch","unit2-ch"], data: [[{x,y},...],[{x,y},...]] }
-// We need:    [{ t:"Mar 9 14:30", _ts: 1710..., r01: value, r02: value }, ...]
+// We need:    [{ t:"HH:MM", r01: value, r02: value }, ...]
 const transformTimeSeries = (raw, workers) => {
   if (!raw?.series?.length || !raw?.data?.length) return { data: [], keys: [] };
 
+  // Build key mapping: series name → short key like "r01", "r02"
   const keyMap = {};
   const keys = [];
   raw.series.forEach((seriesName, i) => {
+    // seriesName is like "oliveirapioreactor01-2" - extract the unit name
     const unitName = seriesName.replace(/-\d+$/, "");
     const workerIdx = workers.findIndex((w) => w.id === unitName);
     const shortKey = `r${String(workerIdx + 1).padStart(2, "0")}`;
@@ -72,38 +83,24 @@ const transformTimeSeries = (raw, workers) => {
     });
   });
 
-  // Check if data spans more than 24h to decide label format
-  let minTs = Infinity, maxTs = -Infinity;
-  raw.data.forEach((seriesData) =>
-    seriesData.forEach((point) => {
-      const ms = new Date(point.x).getTime();
-      if (ms < minTs) minTs = ms;
-      if (ms > maxTs) maxTs = ms;
-    }),
-  );
-  const spanMs = maxTs - minTs;
-  const showDate = spanMs > 24 * 60 * 60 * 1000;
-
+  // Merge all series into one array keyed by timestamp
   const timeMap = {};
   raw.data.forEach((seriesData, seriesIdx) => {
     const key = keyMap[seriesIdx];
     seriesData.forEach((point) => {
-      const d = new Date(point.x);
-      const ts = d.getTime();
-      const timeStr = showDate
-        ? d.toLocaleDateString("en-GB", { month: "short", day: "numeric" }) +
-          " " +
-          d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })
-        : d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
-      const bucket = showDate ? `${ts}` : timeStr;
-      if (!timeMap[bucket]) timeMap[bucket] = { t: timeStr, _ts: ts };
-      timeMap[bucket][key] = point.y;
+      const timeStr = new Date(point.x).toLocaleTimeString("en-GB", {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      if (!timeMap[timeStr]) timeMap[timeStr] = { t: timeStr };
+      timeMap[timeStr][key] = point.y;
     });
   });
 
-  let data = Object.values(timeMap).sort((a, b) => a._ts - b._ts);
-  if (data.length > 300) {
-    const step = Math.ceil(data.length / 300);
+  // Sort by time and sample down if too many points (keep ~200 max for performance)
+  let data = Object.values(timeMap).sort((a, b) => a.t.localeCompare(b.t));
+  if (data.length > 200) {
+    const step = Math.ceil(data.length / 200);
     data = data.filter((_, i) => i % step === 0);
   }
 
@@ -139,11 +136,9 @@ const usePioreactorData = () => {
   const [reactors, setReactors] = useState([]);
   const [odData, setOdData] = useState({ data: [], keys: [] });
   const [tempData, setTempData] = useState({ data: [], keys: [] });
-  const [stirData, setStirData] = useState({ data: [], keys: [] });
   const [growthData, setGrowthData] = useState({ data: [], keys: [] });
   const [logs, setLogs] = useState([]);
   const [lastFetch, setLastFetch] = useState(null);
-  const [timeRange, setTimeRange] = useState({ start: "", end: "" });
 
   // Persist overrides to localStorage so they survive page refresh
   const loadOverrides = () => {
@@ -185,22 +180,19 @@ const usePioreactorData = () => {
     setExperiment(latestExp);
     const expName = encodeURIComponent(latestExp.experiment);
 
-    // 3. Fetch all time series in parallel (with optional date range)
-    const tr = timeRange;
-    const rangeQ =
-      (tr.start ? `&start=${encodeURIComponent(tr.start)}` : "") +
-      (tr.end ? `&end=${encodeURIComponent(tr.end)}` : "");
-    const modN = !tr.start && !tr.end ? 1 : 5;
-    const [odRaw, tempRaw, stirRaw, growthRaw] = await Promise.all([
-      api(`/api/experiments/${expName}/time_series/od_readings?filter_mod_N=${modN}${rangeQ}`),
-      api(`/api/experiments/${expName}/time_series/temperature_readings?filter_mod_N=${modN}${rangeQ}`),
-      api(`/api/experiments/${expName}/time_series/stirring_rates?filter_mod_N=${modN}${rangeQ}`),
-      api(`/api/experiments/${expName}/time_series/growth_rates?filter_mod_N=${modN}${rangeQ}`),
+    // 3. Fetch all time series in parallel
+    const [odRaw, tempRaw, growthRaw] = await Promise.all([
+      api(`/api/experiments/${expName}/time_series/od_readings?filter_mod_N=1`),
+      api(
+        `/api/experiments/${expName}/time_series/temperature_readings?filter_mod_N=1`,
+      ),
+      api(
+        `/api/experiments/${expName}/time_series/growth_rates?filter_mod_N=1`,
+      ),
     ]);
 
     setOdData(transformTimeSeries(odRaw, workers));
     setTempData(transformTimeSeries(tempRaw, workers));
-    setStirData(transformTimeSeries(stirRaw, workers));
     setGrowthData(transformTimeSeries(growthRaw, workers));
 
     // 4. Fetch logs
@@ -243,7 +235,7 @@ const usePioreactorData = () => {
 
   // Remove reactor via API
   const removeReactor = async (id) => {
-    await fetch(buildApiUrl(`/api/workers/${encodeURIComponent(id)}`), {
+    await pioFetch(buildApiUrl(`/api/workers/${encodeURIComponent(id)}`), {
       method: "DELETE",
     }).catch(() => {});
     // Clean up any stored override
@@ -272,12 +264,12 @@ const usePioreactorData = () => {
       saveOverrides(newOverrides);
       // Try API call (fire-and-forget) — try both endpoint formats
       const newActive = newStatus === "online" ? 1 : 0;
-      fetch(buildApiUrl(`/api/workers/${encodeURIComponent(id)}`), {
+      pioFetch(buildApiUrl(`/api/workers/${encodeURIComponent(id)}`), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ is_active: newActive }),
       }).catch(() => {});
-      fetch(buildApiUrl(`/api/workers/${encodeURIComponent(id)}/is_active`), {
+      pioFetch(buildApiUrl(`/api/workers/${encodeURIComponent(id)}/is_active`), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ is_active: newActive }),
@@ -295,7 +287,7 @@ const usePioreactorData = () => {
     
     const results = await Promise.allSettled(
       onlineReactors.map(r =>
-        fetch(buildApiUrl(`/api/workers/${encodeURIComponent(r.id)}/jobs/run/job_name/${jobName}/experiments/${expEnc}`), {
+        pioFetch(buildApiUrl(`/api/workers/${encodeURIComponent(r.id)}/jobs/run/job_name/${jobName}/experiments/${expEnc}`), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ options }),
@@ -315,7 +307,7 @@ const usePioreactorData = () => {
     const onlineReactors = reactors.filter(r => r.status === "online");
     await Promise.allSettled(
       onlineReactors.map(r =>
-        fetch(buildApiUrl(`/api/workers/${encodeURIComponent(r.id)}/jobs/stop/job_name/${jobName}/experiments/${expEnc}`), {
+        pioFetch(buildApiUrl(`/api/workers/${encodeURIComponent(r.id)}/jobs/stop/job_name/${jobName}/experiments/${expEnc}`), {
           method: "POST",
         })
       )
@@ -331,11 +323,8 @@ const usePioreactorData = () => {
     lastFetch,
     odData,
     tempData,
-    stirData,
     growthData,
     logs,
-    timeRange,
-    setTimeRange,
     addReactor,
     removeReactor,
     toggleStatus,
@@ -998,7 +987,6 @@ const Chart = ({
 /* ─── INTERPRETATIONS ─── */
 const I_OD = `Both bioreactors are currently running with sterile water - no biological organisms are present.\n\nBioreactor 01 (OD ~0.206–0.208) shows a stable baseline with a notable downward drift beginning around 02:30 UTC, dropping from ~0.2075 to ~0.2058. This is not biological - it's almost certainly caused by ambient temperature cooling. As water cools, its refractive index changes slightly, which shifts the OD reading.\n\nBioreactor 02 (OD ~0.005) is reading near-zero, confirming very clear water with minimal light scatter.\n\nKey takeaway: Both sensors are working correctly. When you introduce a culture, you'll see OD begin climbing from these baselines. The temperature-driven drift tells you to run Temperature Automation for precise measurements.`;
 const I_TEMP = `No temperature data is currently being collected.\n\nTo start: Pioreactor UI → Control all Pioreactors → Temperature Automation → Thermostat → 30°C.\n\nThis works with water. You'll see temperature climb from room temp to target, then hold steady. Temperature data is critical because it directly affects OD readings.`;
-const I_STIR = `No stirring data is currently being collected.\n\nStirring should be running if OD readings are active. Check that the Stirring activity is started in the Pioreactor UI.\n\nA sudden drop to 0 RPM means the stir bar detached - the culture stops being mixed, causing sedimentation and inaccurate OD readings.`;
 const I_GR = `No growth rate data is currently being collected.\n\nGrowth rate requires the Growth Rate activity AND actual organisms. With sterile water, it will always be zero.\n\nWith real organisms: expect yeast in YPD at 30°C to show a doubling time of ~90 minutes during exponential phase.`;
 
 /* ─── ADD REACTOR MODAL ─── */
@@ -1375,159 +1363,6 @@ const AddReactorModal = ({ open, onClose, onAdd, th }) => {
   );
 };
 
-/* ─── TIME RANGE BAR ─── */
-const TimeRangeBar = ({ th, timeRange, setTimeRange, refresh }) => {
-  const presets = [
-    { label: "Live", start: "", end: "" },
-    { label: "1h", h: 1 },
-    { label: "6h", h: 6 },
-    { label: "24h", h: 24 },
-    { label: "3d", h: 72 },
-    { label: "7d", h: 168 },
-    { label: "30d", h: 720 },
-  ];
-  const isLive = !timeRange.start && !timeRange.end;
-  const applyPreset = (p) => {
-    if (!p.h) {
-      setTimeRange({ start: "", end: "" });
-    } else {
-      const end = new Date();
-      const start = new Date(end.getTime() - p.h * 60 * 60 * 1000);
-      setTimeRange({
-        start: start.toISOString(),
-        end: end.toISOString(),
-      });
-    }
-    setTimeout(refresh, 100);
-  };
-  const activePreset = isLive
-    ? "Live"
-    : presets.find((p) => {
-        if (!p.h || !timeRange.start) return false;
-        const diff = new Date(timeRange.end) - new Date(timeRange.start);
-        return Math.abs(diff - p.h * 3600000) < 60000;
-      })?.label || "custom";
-
-  const toLocal = (iso) => {
-    if (!iso) return "";
-    const d = new Date(iso);
-    const pad = (n) => String(n).padStart(2, "0");
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  };
-  const fromLocal = (val) => (val ? new Date(val).toISOString() : "");
-
-  return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        flexWrap: "wrap",
-        marginBottom: 16,
-        padding: "12px 16px",
-        background: th.surface,
-        border: `1px solid ${th.border}`,
-        borderRadius: 12,
-        boxShadow: th.shadow,
-      }}
-    >
-      <span
-        style={{
-          fontSize: 14,
-          fontWeight: 600,
-          color: th.textMuted,
-          textTransform: "uppercase",
-          letterSpacing: "0.06em",
-          marginRight: 4,
-        }}
-      >
-        Time Range
-      </span>
-      {presets.map((p) => (
-        <button
-          key={p.label}
-          onClick={() => applyPreset(p)}
-          style={{
-            padding: "5px 12px",
-            borderRadius: 7,
-            border: `1px solid ${activePreset === p.label ? th.accent : th.border}`,
-            background: activePreset === p.label ? th.accent : th.bgAlt,
-            color: activePreset === p.label ? "#fff" : th.textSecondary,
-            fontSize: 14,
-            fontWeight: 600,
-            cursor: "pointer",
-            fontFamily: "inherit",
-          }}
-        >
-          {p.label}
-        </button>
-      ))}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-          marginLeft: 8,
-        }}
-      >
-        <input
-          type="datetime-local"
-          value={toLocal(timeRange.start)}
-          onChange={(e) => {
-            const s = fromLocal(e.target.value);
-            setTimeRange((prev) => ({ ...prev, start: s }));
-          }}
-          style={{
-            padding: "4px 8px",
-            borderRadius: 6,
-            border: `1px solid ${th.border}`,
-            background: th.bgAlt,
-            color: th.text,
-            fontSize: 13,
-            fontFamily: "'JetBrains Mono',monospace",
-            outline: "none",
-          }}
-        />
-        <span style={{ color: th.textMuted, fontSize: 13 }}>→</span>
-        <input
-          type="datetime-local"
-          value={toLocal(timeRange.end)}
-          onChange={(e) => {
-            const en = fromLocal(e.target.value);
-            setTimeRange((prev) => ({ ...prev, end: en }));
-          }}
-          style={{
-            padding: "4px 8px",
-            borderRadius: 6,
-            border: `1px solid ${th.border}`,
-            background: th.bgAlt,
-            color: th.text,
-            fontSize: 13,
-            fontFamily: "'JetBrains Mono',monospace",
-            outline: "none",
-          }}
-        />
-        <button
-          onClick={refresh}
-          style={{
-            padding: "5px 12px",
-            borderRadius: 7,
-            border: `1px solid ${th.accent}`,
-            background: th.accent,
-            color: "#fff",
-            fontSize: 13,
-            fontWeight: 600,
-            cursor: "pointer",
-            fontFamily: "inherit",
-          }}
-        >
-          Go
-        </button>
-      </div>
-    </div>
-  );
-};
-
 /* ─── MAIN ─── */
 export default function App() {
   const [mode, setMode] = useState("light");
@@ -1548,7 +1383,6 @@ export default function App() {
     lastFetch,
     odData,
     tempData,
-    stirData,
     growthData,
     addReactor,
     removeReactor,
@@ -1556,8 +1390,6 @@ export default function App() {
     startJob,
     stopJob,
     logs,
-    timeRange,
-    setTimeRange,
     refresh,
   } = usePioreactorData();
 
@@ -1576,7 +1408,6 @@ export default function App() {
     { id: "reactors", icon: "⬢", label: "Bioreactors" },
     { id: "od", icon: "◎", label: "OD Readings" },
     { id: "temp", icon: "◈", label: "Temperature" },
-    { id: "stirring", icon: "↻", label: "Stirring" },
     { id: "growth", icon: "↗", label: "Growth Rate" },
     { id: "pumps", icon: "⬡", label: "Pump Control" },
     { id: "logs", icon: "☰", label: "Logs" },
@@ -1588,7 +1419,6 @@ export default function App() {
     ? odData.keys
     : [{ key: "r01", label: "Bioreactor 01", s: "R-01" }];
   const tempKeys = tempData.keys.length ? tempData.keys : odKeys;
-  const stirKeys = stirData.keys.length ? stirData.keys : odKeys;
   const growthKeys = growthData.keys.length ? growthData.keys : odKeys;
 
   // Dynamic colors for however many reactors exist
@@ -1603,15 +1433,10 @@ export default function App() {
     "#06b6d4",
   ];
 
-  const isLive = !timeRange.start && !timeRange.end;
-  const rangeLbl = isLive
-    ? "Live"
-    : `${new Date(timeRange.start).toLocaleDateString()} – ${new Date(timeRange.end).toLocaleDateString()}`;
-
   const odP = {
     title: "Optical Density (OD)",
     subtitle: odData.data.length
-      ? `90° scatter · ${odData.data.length} readings · ${rangeLbl}`
+      ? `90° scatter · ${odData.data.length} readings · Live`
       : "Waiting for data...",
     data: odData.data,
     keys: odKeys,
@@ -1635,7 +1460,7 @@ export default function App() {
   const tempP = {
     title: "Temperature (°C)",
     subtitle: tempData.data.length
-      ? `${tempData.data.length} readings · ${rangeLbl}`
+      ? `${tempData.data.length} readings · Live`
       : "Not running",
     data: tempData.data,
     keys: tempKeys,
@@ -1658,34 +1483,10 @@ export default function App() {
       : "Check Connection",
     onEmptyAction: connected ? () => handleStartJob("temperature_automation", { automation_name: "thermostat", target_temperature: 30 }) : undefined,
   };
-  const stirP = {
-    title: "Stirring Rate (RPM)",
-    subtitle: stirData.data.length
-      ? `${stirData.data.length} readings · ${rangeLbl}`
-      : "Not running",
-    data: stirData.data,
-    keys: stirKeys,
-    colors: palette,
-    yFmt: (v) => Math.round(v) + "",
-    csvCols: [
-      { key: "t", label: "Time" },
-      ...stirKeys.map((k) => ({ key: k.key, label: `${k.label}_RPM` })),
-    ],
-    csvName: "stirring",
-    interpTitle: "Stirring Interpretation",
-    interpText: I_STIR,
-    emptyIcon: "↻",
-    emptyTitle: "No stirring data",
-    emptySub: connected
-      ? "Stirring data appears when the Stirring activity is running."
-      : "Cannot reach Pioreactor API.",
-    emptyAction: connected ? (starting.stirring ? "Starting..." : "Start Stirring →") : "Check Connection",
-    onEmptyAction: connected ? () => handleStartJob("stirring", { target_rpm: "400" }) : undefined,
-  };
   const grP = {
     title: "Growth Rate",
     subtitle: growthData.data.length
-      ? `${growthData.data.length} readings · ${rangeLbl}`
+      ? `${growthData.data.length} readings · Live`
       : "Not running",
     data: growthData.data,
     keys: growthKeys,
@@ -1979,7 +1780,7 @@ export default function App() {
                 <input
                   value={pioUrlInput}
                   onChange={(e) => setPioUrlInput(e.target.value)}
-                  placeholder="https://controlling-adds-speak-stop.trycloudflare.com"
+                  placeholder={DEFAULT_PIOREACTOR_URL}
                   style={{
                     width: "100%",
                     padding: "8px 10px",
@@ -2182,7 +1983,6 @@ export default function App() {
 
         {page === "overview" && (
           <div style={{ padding: "24px" }}>
-            <TimeRangeBar th={th} timeRange={timeRange} setTimeRange={setTimeRange} refresh={refresh} />
             <div
               style={{
                 display: "grid",
@@ -2316,7 +2116,6 @@ export default function App() {
             </div>
             <Chart th={th} {...odP} />
             <Chart th={th} {...tempP} />
-            <Chart th={th} {...stirP} />
             <Chart th={th} {...grP} />
           </div>
         )}
@@ -2613,25 +2412,16 @@ export default function App() {
 
         {page === "od" && (
           <div style={{ padding: "24px" }}>
-            <TimeRangeBar th={th} timeRange={timeRange} setTimeRange={setTimeRange} refresh={refresh} />
             <Chart th={th} {...odP} />
           </div>
         )}
         {page === "temp" && (
           <div style={{ padding: "24px" }}>
-            <TimeRangeBar th={th} timeRange={timeRange} setTimeRange={setTimeRange} refresh={refresh} />
             <Chart th={th} {...tempP} />
-          </div>
-        )}
-        {page === "stirring" && (
-          <div style={{ padding: "24px" }}>
-            <TimeRangeBar th={th} timeRange={timeRange} setTimeRange={setTimeRange} refresh={refresh} />
-            <Chart th={th} {...stirP} />
           </div>
         )}
         {page === "growth" && (
           <div style={{ padding: "24px" }}>
-            <TimeRangeBar th={th} timeRange={timeRange} setTimeRange={setTimeRange} refresh={refresh} />
             <Chart th={th} {...grP} />
           </div>
         )}
