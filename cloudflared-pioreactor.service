@@ -1,0 +1,31 @@
+# Cloudflare Tunnel - exposes Pioreactor API at api.environnets.com
+# This is the BACKEND - the Pioreactor REST API (port 80)
+#
+# Prerequisites:
+# 1. environnets.com added to Cloudflare, nameservers updated at GoDaddy
+# 2. cloudflared tunnel login (select environnets.com)
+# 3. cloudflared tunnel create pioreactor-api
+# 4. Edit /home/pioreactor/.cloudflared/config.yml with actual tunnel ID
+# 5. cloudflared tunnel route dns pioreactor-api api.environnets.com
+#
+# Install:
+#   scp cloudflared-pioreactor.service pioreactor@oliveirapioreactor01.local:~
+#   sudo cp ~/cloudflared-pioreactor.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable cloudflared-pioreactor
+#   sudo systemctl start cloudflared-pioreactor
+
+[Unit]
+Description=Cloudflare Tunnel for Pioreactor API (api.environnets.com)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pioreactor
+ExecStart=/usr/bin/cloudflared tunnel --config /home/pioreactor/.cloudflared/config.yml run
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,18 @@
+# Cloudflare Tunnel config for Pioreactor API (backend)
+# Used when running: cloudflared tunnel run pioreactor-api
+#
+# Setup:
+# 1. cloudflared tunnel login   (select environnets.com)
+# 2. cloudflared tunnel create pioreactor-api
+# 3. Copy the tunnel ID and replace TUNNEL_ID below
+# 4. Copy the JSON credentials file to: /home/pioreactor/.cloudflared/TUNNEL_ID.json
+# 5. cloudflared tunnel route dns pioreactor-api api.environnets.com
+# 6. cloudflared tunnel run pioreactor-api   (or use the systemd service)
+
+tunnel: TUNNEL_ID
+credentials-file: /home/pioreactor/.cloudflared/TUNNEL_ID.json
+
+ingress:
+  - hostname: api.environnets.com
+    service: http://localhost:80
+  - service: http_status:404
