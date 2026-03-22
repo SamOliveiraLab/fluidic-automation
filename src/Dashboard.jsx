@@ -27,11 +27,11 @@ const setApiBase = (url) => {
 };
 
 const buildApiUrl = (path) => {
-  const base = getApiBase();
   if (typeof import.meta !== "undefined" && import.meta.env?.DEV) {
-    return path.startsWith("/api") ? path : `${base}${path}`;
+    return path;
   }
-  return `${base}${path}`;
+  const base = getApiBase();
+  return `/api/proxy?base=${encodeURIComponent(base)}&path=${encodeURIComponent(path)}`;
 };
 
 const REFRESH_INTERVAL = 10000; // 10 seconds
