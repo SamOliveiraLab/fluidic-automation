@@ -302,9 +302,37 @@ const usePioreactorData = () => {
 
     setConnected(true);
     const workers = transformWorkers(workersRaw);
-    // Merge with local overrides so toggles persist
+
+    // Check reachability for each active worker
+    const reachResults = await Promise.allSettled(
+      workers.filter(w => w.status === "online").map(async (w) => {
+        try {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 4000);
+          const res = await pioFetch(buildApiUrl(`/api/workers/${encodeURIComponent(w.id)}/jobs/running`), { signal: controller.signal });
+          clearTimeout(timeout);
+          return { id: w.id, reachable: !!res };
+        } catch {
+          return { id: w.id, reachable: false };
+        }
+      })
+    );
+    const reachMap = {};
+    reachResults.forEach(r => {
+      if (r.status === "fulfilled") reachMap[r.value.id] = r.value.reachable;
+    });
+
+    // Merge: only show as online if is_active AND reachable
+    const withReach = workers.map(w => {
+      if (w.status === "online" && reachMap[w.id] === false) {
+        return { ...w, status: "offline" };
+      }
+      return w;
+    });
+
+    // Apply localStorage overrides on top
     const overrides = statusOverridesRef.current;
-    const merged = workers.map((w) =>
+    const merged = withReach.map((w) =>
       overrides[w.id] ? { ...w, status: overrides[w.id] } : w,
     );
     setReactors(merged);
