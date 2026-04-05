@@ -230,7 +230,6 @@ const buildPerReactorTelemetry = (
 const overviewCardDotStatus = (r, tel, chartLiveMode) => {
   if (r.status === "offline") return "offline";
   if (r.status === "warning") return "warning";
-  if (chartLiveMode && (!tel || !tel.isLive)) return "warning";
   return "online";
 };
 
@@ -308,11 +307,12 @@ const usePioreactorData = () => {
     const withOverrides = workers.map((w) =>
       overrides[w.id] ? { ...w, status: overrides[w.id] } : w,
     );
-    setReactors(withOverrides);
+    // Don't setReactors yet - wait until after telemetry check to avoid flicker
 
     // 2. Fetch experiments and select
     const expsRaw = await api("/api/experiments");
     if (!expsRaw?.length) {
+      setReactors(withOverrides);
       setLoading(false);
       return;
     }
@@ -363,7 +363,8 @@ const usePioreactorData = () => {
       return checkSeries(odRaw) || checkSeries(tempRaw) || checkSeries(growthRaw);
     };
 
-    setReactors(prev => prev.map((r, i) => {
+    // Set reactors once with reachability applied - no flicker
+    setReactors(withOverrides.map((r, i) => {
       if (r.status === "offline") return r; // is_active=0 or manually excluded
       if (i === 0) return { ...r, status: "online" }; // leader is always reachable
       // Other active workers: online if they have data, offline if not
