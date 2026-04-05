@@ -877,6 +877,8 @@ const Chart = ({
   onEmptyAction,
   onStopAction,
   stopLabel,
+  onStartAction,
+  startLabel,
   headerExtra,
 }) => {
   const [filter, setFilter] = useState("both");
@@ -1007,6 +1009,24 @@ const Chart = ({
             >
               ↓ PNG
             </button>
+            {has && onStartAction && (
+              <button
+                onClick={onStartAction}
+                style={{
+                  padding: "5px 12px",
+                  borderRadius: 6,
+                  fontSize: 14,
+                  fontWeight: 700,
+                  fontFamily: "inherit",
+                  background: `${th.success}15`,
+                  border: `1px solid ${th.success}40`,
+                  color: th.success,
+                  cursor: "pointer",
+                }}
+              >
+                {startLabel || "Start"}
+              </button>
+            )}
             {has && onStopAction && (
               <button
                 onClick={onStopAction}
@@ -2319,6 +2339,8 @@ export default function App() {
         ? () => handleStopJob("od_reading")
         : undefined,
     stopLabel: stopping.od_reading ? "Stopping..." : "■ Stop OD",
+    onStartAction: connected ? () => handleStartJob("od_reading") : undefined,
+    startLabel: starting.od_reading ? "Starting..." : "▶ Start OD",
   };
   const tempP = {
     title: "Temperature (°C)",
@@ -2358,6 +2380,8 @@ export default function App() {
         ? () => handleStopJob("temperature_automation")
         : undefined,
     stopLabel: stopping.temperature_automation ? "Stopping..." : "■ Stop Temp",
+    onStartAction: connected ? () => handleStartJob("temperature_automation", { automation_name: "thermostat", target_temperature: parseFloat(targetTemp) }) : undefined,
+    startLabel: starting.temperature_automation ? "Starting..." : `▶ Start ${targetTemp}°C`,
     headerExtra: (
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <label style={{ fontSize: 13, fontWeight: 600, color: th.textMuted }}>Target</label>
@@ -2437,6 +2461,8 @@ export default function App() {
         ? () => handleStopJob("growth_rate_calculating")
         : undefined,
     stopLabel: stopping.growth_rate_calculating ? "Stopping..." : "■ Stop GR",
+    onStartAction: connected ? () => handleStartJob("growth_rate_calculating") : undefined,
+    startLabel: starting.growth_rate_calculating ? "Starting..." : "▶ Start GR",
   };
 
   const CS = ({ icon, title, desc }) => (
