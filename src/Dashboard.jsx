@@ -1368,6 +1368,146 @@ const AddReactorModal = ({ open, onClose, onAdd, th }) => {
   );
 };
 
+/* ─── ANIMATED BIOREACTOR VIAL ─── */
+const AnimatedVial = ({ th, odValue = 0, tempValue = 0, stirringRpm = 0, growthRate = 0, pumpActive = false, reactorName = "" }) => {
+  const [cells, setCells] = useState([]);
+  const [tick, setTick] = useState(0);
+  const animRef = useRef(null);
+
+  // Generate cells based on OD
+  useEffect(() => {
+    const count = Math.min(Math.max(Math.round(odValue * 40), 3), 80);
+    setCells(prev => {
+      if (Math.abs(prev.length - count) < 3) return prev;
+      const arr = [];
+      for (let i = 0; i < count; i++) {
+        const existing = prev[i];
+        arr.push(existing || {
+          x: 30 + Math.random() * 140,
+          y: 60 + Math.random() * 120,
+          r: 2 + Math.random() * 3,
+          vx: (Math.random() - 0.5) * 0.5,
+          vy: (Math.random() - 0.5) * 0.3,
+          hue: 90 + Math.random() * 40,
+          phase: Math.random() * Math.PI * 2,
+        });
+      }
+      return arr;
+    });
+  }, [odValue]);
+
+  // Animation loop
+  useEffect(() => {
+    let raf;
+    const animate = () => {
+      setTick(t => t + 1);
+      raf = requestAnimationFrame(animate);
+    };
+    raf = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
+  // Move cells each tick
+  const stirFactor = Math.min(stirringRpm / 400, 2);
+  const movedCells = cells.map((c, i) => {
+    const swirl = stirFactor * 0.8;
+    const cx = 100, cy = 130;
+    const dx = c.x - cx, dy = c.y - cy;
+    const angle = Math.atan2(dy, dx) + swirl * 0.02;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    let nx = cx + Math.cos(angle) * dist + c.vx * (1 + swirl);
+    let ny = cy + Math.sin(angle) * dist + c.vy + Math.sin(tick * 0.03 + c.phase) * 0.3;
+    // Bounds
+    if (nx < 32) nx = 32 + Math.random() * 4;
+    if (nx > 168) nx = 168 - Math.random() * 4;
+    if (ny < 62) ny = 62 + Math.random() * 4;
+    if (ny > 178) ny = 178 - Math.random() * 4;
+    return { ...c, x: nx, y: ny };
+  });
+
+  // Temperature color
+  const tempNorm = Math.min(Math.max((tempValue - 20) / 25, 0), 1);
+  const liquidColor = `hsl(${200 - tempNorm * 60}, ${50 + tempNorm * 20}%, ${85 - tempNorm * 15}%)`;
+  const liquidColorDark = `hsl(${200 - tempNorm * 60}, ${40 + tempNorm * 15}%, ${35 - tempNorm * 5}%)`;
+
+  // Growth indicator
+  const growthColor = growthRate > 0.02 ? "#22c55e" : growthRate > 0 ? "#eab308" : "#94a3b8";
+
+  return (
+    <div style={{ background: th.surface, border: `1px solid ${th.border}`, borderRadius: 14, padding: "16px 20px", boxShadow: th.shadow }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+        <div style={{ fontSize: 16, fontWeight: 700, color: th.text }}>{reactorName || "Bioreactor Vial"}</div>
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <div style={{ width: 8, height: 8, borderRadius: "50%", background: growthColor }} />
+          <span style={{ fontSize: 12, color: th.textMuted, fontFamily: "'JetBrains Mono',monospace" }}>
+            GR: {growthRate?.toFixed(4) || "---"}
+          </span>
+        </div>
+      </div>
+      <svg viewBox="0 0 200 220" style={{ width: "100%", maxHeight: 220 }}>
+        {/* Vial body */}
+        <defs>
+          <clipPath id={`vialClip-${reactorName}`}>
+            <rect x="28" y="20" width="144" height="175" rx="10" />
+          </clipPath>
+          <linearGradient id={`liquidGrad-${reactorName}`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={liquidColor} stopOpacity="0.6" />
+            <stop offset="100%" stopColor={liquidColor} stopOpacity="0.9" />
+          </linearGradient>
+        </defs>
+
+        {/* Vial outline */}
+        <rect x="28" y="20" width="144" height="175" rx="10" fill="none" stroke={th.border} strokeWidth="2" />
+
+        {/* Cap */}
+        <rect x="60" y="8" width="80" height="18" rx="4" fill={th.textMuted} opacity="0.3" />
+        {/* Cap ports */}
+        <circle cx="78" cy="10" r="3" fill={th.textMuted} opacity="0.4" />
+        <circle cx="122" cy="10" r="3" fill={th.textMuted} opacity="0.4" />
+
+        {/* Liquid fill */}
+        <rect x="29" y="55" width="142" height="139" rx="9" fill={`url(#liquidGrad-${reactorName})`} clipPath={`url(#vialClip-${reactorName})`} />
+
+        {/* Liquid surface wave */}
+        <path d={`M29,${55 + Math.sin(tick * 0.05) * 1.5} Q100,${52 + Math.sin(tick * 0.05 + 1) * 2 * (1 + stirFactor * 0.3)} 171,${55 + Math.sin(tick * 0.05 + 2) * 1.5}`} stroke={liquidColor} strokeWidth="2" fill="none" opacity="0.7" />
+
+        {/* Bacteria cells */}
+        <g clipPath={`url(#vialClip-${reactorName})`}>
+          {movedCells.map((c, i) => (
+            <g key={i}>
+              <ellipse cx={c.x} cy={c.y} rx={c.r} ry={c.r * 0.7} fill={`hsl(${c.hue}, 60%, 50%)`} opacity="0.75"
+                transform={`rotate(${(tick * (stirFactor + 0.2) + i * 37) % 360}, ${c.x}, ${c.y})`} />
+              {growthRate > 0.01 && i % 5 === 0 && (
+                <ellipse cx={c.x + c.r * 0.8} cy={c.y} rx={c.r * 0.5} ry={c.r * 0.35} fill={`hsl(${c.hue}, 60%, 55%)`} opacity="0.5"
+                  transform={`rotate(${(tick * (stirFactor + 0.2) + i * 37) % 360}, ${c.x}, ${c.y})`} />
+              )}
+            </g>
+          ))}
+        </g>
+
+        {/* Stir bar */}
+        <rect x={100 - 15} y="182" width="30" height="4" rx="2" fill={th.textMuted} opacity="0.5"
+          transform={`rotate(${(tick * stirFactor * 2) % 360}, 100, 184)`} />
+
+        {/* Pump flow indicators */}
+        {pumpActive && (
+          <>
+            <line x1="20" y1="80" x2="28" y2="80" stroke="#3b82f6" strokeWidth="2" strokeDasharray="3,3" strokeDashoffset={-tick % 6} />
+            <line x1="172" y1="100" x2="180" y2="100" stroke="#ef4444" strokeWidth="2" strokeDasharray="3,3" strokeDashoffset={tick % 6} />
+            <text x="12" y="75" fontSize="7" fill="#3b82f6" textAnchor="middle">IN</text>
+            <text x="188" y="95" fontSize="7" fill="#ef4444" textAnchor="middle">OUT</text>
+          </>
+        )}
+
+        {/* Data readouts */}
+        <text x="100" y="210" textAnchor="middle" fontSize="9" fill={th.textMuted} fontFamily="'JetBrains Mono',monospace">
+          OD: {odValue?.toFixed(3) || "---"} · {tempValue?.toFixed(1) || "--"}°C · {stirringRpm || 0} RPM
+        </text>
+      </svg>
+    </div>
+  );
+};
+
 /* ─── TIME RANGE BAR ─── */
 const TimeRangeBar = ({ th, timeRange, setTimeRange, refresh }) => {
   const presets = [
@@ -1453,6 +1593,65 @@ export default function App() {
 
   const online = reactors.filter((r) => r.status === "online").length;
   const [starting, setStarting] = useState({});
+
+  // Pump control state
+  const [pumpMode, setPumpMode] = useState("manual"); // manual, chemostat, turbidostat
+  const [pumpVolume, setPumpVolume] = useState("1.0");
+  const [pumpDuration, setPumpDuration] = useState("60");
+  const [pumpTargetOD, setPumpTargetOD] = useState("1.0");
+  const [pumpRunning, setPumpRunning] = useState(false);
+  const [pumpLog, setPumpLog] = useState([]);
+  const [manualPump, setManualPump] = useState("media"); // media, waste, alt_media
+
+  const addPumpLogEntry = (msg) => setPumpLog(prev => [{ time: new Date().toLocaleTimeString(), msg }, ...prev].slice(0, 50));
+
+  const handleManualDose = async () => {
+    if (!experiment || !connected) return;
+    setPumpRunning(true);
+    addPumpLogEntry(`Manual dose: ${manualPump} pump, ${pumpVolume} mL`);
+    const expEnc = encodeURIComponent(experiment.experiment);
+    const onlineR = reactors.filter(r => r.status === "online");
+    await Promise.allSettled(
+      onlineR.map(r =>
+        pioFetch(buildApiUrl(`/api/workers/${encodeURIComponent(r.id)}/jobs/run/job_name/dosing_automation/experiments/${expEnc}`), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ options: { automation_name: "continuous_cycle", volume: parseFloat(pumpVolume), duration: 9999 } }),
+        })
+      )
+    );
+    addPumpLogEntry(`Dose sent to ${onlineR.length} reactor(s)`);
+    setPumpRunning(false);
+    setTimeout(refresh, 3000);
+  };
+
+  const handleStartDosing = async () => {
+    if (!experiment || !connected) return;
+    setPumpRunning(true);
+    const opts = {};
+    if (pumpMode === "chemostat") {
+      opts.automation_name = "chemostat";
+      opts.volume = parseFloat(pumpVolume);
+      opts.duration = parseFloat(pumpDuration);
+    } else if (pumpMode === "turbidostat") {
+      opts.automation_name = "turbidostat";
+      opts.target_od = parseFloat(pumpTargetOD);
+      opts.volume = parseFloat(pumpVolume);
+      opts.duration = parseFloat(pumpDuration);
+    }
+    addPumpLogEntry(`Starting ${pumpMode}: vol=${opts.volume}mL, dur=${opts.duration}min${opts.target_od ? `, OD=${opts.target_od}` : ""}`);
+    await startJob("dosing_automation", opts);
+    addPumpLogEntry(`${pumpMode} started on all online reactors`);
+    setPumpRunning(false);
+  };
+
+  const handleStopDosing = async () => {
+    setPumpRunning(true);
+    addPumpLogEntry("Stopping dosing automation...");
+    await stopJob("dosing_automation");
+    addPumpLogEntry("Dosing stopped");
+    setPumpRunning(false);
+  };
 
   const handleStartJob = async (jobName, options = {}) => {
     setStarting(prev => ({ ...prev, [jobName]: true }));
@@ -2173,6 +2372,42 @@ export default function App() {
                 </div>
               ))}
             </div>
+
+            {/* Animated Bioreactor Vials */}
+            {reactors.length > 0 && (
+              <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill,minmax(200px,1fr))`, gap: 14, marginBottom: 28 }}>
+                {reactors.filter(r => r.status === "online").map(r => {
+                  const lastOd = odData.data.length > 0 ? (() => {
+                    const last = odData.data[odData.data.length - 1];
+                    const key = odData.keys.find(k => k.key && last[k.key] != null);
+                    return key ? parseFloat(last[key.key]) || 0 : 0;
+                  })() : 0;
+                  const lastTemp = tempData.data.length > 0 ? (() => {
+                    const last = tempData.data[tempData.data.length - 1];
+                    const key = tempData.keys.find(k => k.key && last[k.key] != null);
+                    return key ? parseFloat(last[key.key]) || 0 : 0;
+                  })() : 0;
+                  const lastGr = growthData.data.length > 0 ? (() => {
+                    const last = growthData.data[growthData.data.length - 1];
+                    const key = growthData.keys.find(k => k.key && last[k.key] != null);
+                    return key ? parseFloat(last[key.key]) || 0 : 0;
+                  })() : 0;
+                  return (
+                    <AnimatedVial
+                      key={r.id}
+                      th={th}
+                      reactorName={r.label || r.id}
+                      odValue={lastOd}
+                      tempValue={lastTemp || 25}
+                      stirringRpm={400}
+                      growthRate={lastGr}
+                      pumpActive={pumpRunning}
+                    />
+                  );
+                })}
+              </div>
+            )}
+
             <Chart th={th} {...odP} />
             <Chart th={th} {...tempP} />
             <Chart th={th} {...grP} />
@@ -2490,89 +2725,130 @@ export default function App() {
 
         {page === "pumps" && (
           <div style={{ padding: "24px" }}>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fill,minmax(280px,1fr))",
-                gap: 14,
-              }}
-            >
-              <CS
-                icon="💧"
-                title="Media Pump"
-                desc="Controls nutrient delivery. Connect to PWM channel 2 and calibrate."
-              />
-              <CS
-                icon="🗑️"
-                title="Waste Pump"
-                desc="Removes used media. Connect to PWM channel 4 and calibrate."
-              />
-              <CS
-                icon="🧪"
-                title="Alt-Media Pump"
-                desc="Alternative nutrients. Connect to PWM channel 3 and calibrate."
-              />
-              <CS
-                icon="📜"
-                title="Dosing Event Log"
-                desc="Full history of every pump action. Requires active pumps."
-              />
+            {/* Mode Selector */}
+            <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+              {["manual", "chemostat", "turbidostat"].map(m => (
+                <button key={m} onClick={() => setPumpMode(m)} style={{
+                  padding: "10px 20px", borderRadius: 10, border: `1.5px solid ${pumpMode === m ? th.accent : th.border}`,
+                  background: pumpMode === m ? th.accentLight : th.surface, color: pumpMode === m ? th.accent : th.textSecondary,
+                  fontWeight: 700, fontSize: 15, cursor: "pointer", fontFamily: "inherit", textTransform: "capitalize",
+                }}>{m}</button>
+              ))}
             </div>
-            <div
-              style={{
-                marginTop: 20,
-                padding: "20px 24px",
-                background: th.surface,
-                border: `1px solid ${th.border}`,
-                borderRadius: 14,
-                boxShadow: th.shadow,
-              }}
-            >
-              <h3
-                style={{
-                  margin: "0 0 12px",
-                  fontSize: 19,
-                  fontWeight: 700,
-                  color: th.text,
-                }}
-              >
-                How to activate pumps
-              </h3>
-              <div
-                style={{
-                  fontSize: 17,
-                  color: th.textSecondary,
-                  lineHeight: 1.7,
-                }}
-              >
-                <p style={{ margin: "0 0 10px" }}>
-                  <strong style={{ color: th.text }}>1.</strong> Connect
-                  peristaltic pumps to PWM channels on the Pioreactor HAT
-                </p>
-                <p style={{ margin: "0 0 10px" }}>
-                  <strong style={{ color: th.text }}>2.</strong> Break in - run
-                  10 min with water to loosen tubing
-                </p>
-                <p style={{ margin: "0 0 10px" }}>
-                  <strong style={{ color: th.text }}>3.</strong> Calibrate:{" "}
-                  <code
-                    style={{
-                      background: th.bgAlt,
-                      padding: "2px 8px",
-                      borderRadius: 5,
-                      fontFamily: "'JetBrains Mono',monospace",
-                      fontSize: 15,
-                      color: th.accent,
-                    }}
-                  >
-                    pio calibrations run --device media_pump
-                  </code>
-                </p>
-                <p style={{ margin: 0 }}>
-                  <strong style={{ color: th.text }}>4.</strong> Start dosing
-                  automation (Turbidostat or Chemostat)
-                </p>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
+              {/* Control Panel */}
+              <div style={{ background: th.surface, border: `1px solid ${th.border}`, borderRadius: 14, padding: "22px 24px", boxShadow: th.shadow }}>
+                <h3 style={{ margin: "0 0 18px", fontSize: 19, fontWeight: 700, color: th.text }}>
+                  {pumpMode === "manual" ? "Manual Dosing" : pumpMode === "chemostat" ? "Chemostat Mode" : "Turbidostat Mode"}
+                </h3>
+
+                {pumpMode === "manual" && (
+                  <div>
+                    <label style={{ fontSize: 14, fontWeight: 600, color: th.textSecondary, display: "block", marginBottom: 6 }}>Pump</label>
+                    <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
+                      {["media", "waste", "alt_media"].map(p => (
+                        <button key={p} onClick={() => setManualPump(p)} style={{
+                          padding: "8px 16px", borderRadius: 8, border: `1.5px solid ${manualPump === p ? th.accent : th.border}`,
+                          background: manualPump === p ? th.accentLight : "transparent", color: manualPump === p ? th.accent : th.textSecondary,
+                          fontWeight: 600, fontSize: 14, cursor: "pointer", fontFamily: "inherit", textTransform: "capitalize",
+                        }}>{p.replace("_", " ")}</button>
+                      ))}
+                    </div>
+                    <label style={{ fontSize: 14, fontWeight: 600, color: th.textSecondary, display: "block", marginBottom: 6 }}>Volume (mL)</label>
+                    <input value={pumpVolume} onChange={e => setPumpVolume(e.target.value)} type="number" step="0.1" min="0" style={{
+                      width: "100%", padding: "10px 14px", borderRadius: 8, border: `1px solid ${th.border}`, background: th.bgAlt,
+                      color: th.text, fontSize: 16, fontFamily: "'JetBrains Mono',monospace", outline: "none", marginBottom: 18,
+                    }} />
+                    <button onClick={handleManualDose} disabled={pumpRunning || !connected} style={{
+                      width: "100%", padding: "12px", borderRadius: 10, border: "none", background: connected ? th.accent : th.border,
+                      color: "#fff", fontWeight: 700, fontSize: 16, cursor: connected ? "pointer" : "not-allowed", fontFamily: "inherit",
+                      opacity: pumpRunning ? 0.6 : 1,
+                    }}>{pumpRunning ? "Dosing..." : `Dose ${pumpVolume} mL (${manualPump.replace("_"," ")})`}</button>
+                  </div>
+                )}
+
+                {(pumpMode === "chemostat" || pumpMode === "turbidostat") && (
+                  <div>
+                    {pumpMode === "turbidostat" && (
+                      <>
+                        <label style={{ fontSize: 14, fontWeight: 600, color: th.textSecondary, display: "block", marginBottom: 6 }}>Target OD</label>
+                        <input value={pumpTargetOD} onChange={e => setPumpTargetOD(e.target.value)} type="number" step="0.1" min="0" style={{
+                          width: "100%", padding: "10px 14px", borderRadius: 8, border: `1px solid ${th.border}`, background: th.bgAlt,
+                          color: th.text, fontSize: 16, fontFamily: "'JetBrains Mono',monospace", outline: "none", marginBottom: 14,
+                        }} />
+                      </>
+                    )}
+                    <label style={{ fontSize: 14, fontWeight: 600, color: th.textSecondary, display: "block", marginBottom: 6 }}>Exchange Volume (mL)</label>
+                    <input value={pumpVolume} onChange={e => setPumpVolume(e.target.value)} type="number" step="0.1" min="0" style={{
+                      width: "100%", padding: "10px 14px", borderRadius: 8, border: `1px solid ${th.border}`, background: th.bgAlt,
+                      color: th.text, fontSize: 16, fontFamily: "'JetBrains Mono',monospace", outline: "none", marginBottom: 14,
+                    }} />
+                    <label style={{ fontSize: 14, fontWeight: 600, color: th.textSecondary, display: "block", marginBottom: 6 }}>Interval (minutes)</label>
+                    <input value={pumpDuration} onChange={e => setPumpDuration(e.target.value)} type="number" step="1" min="1" style={{
+                      width: "100%", padding: "10px 14px", borderRadius: 8, border: `1px solid ${th.border}`, background: th.bgAlt,
+                      color: th.text, fontSize: 16, fontFamily: "'JetBrains Mono',monospace", outline: "none", marginBottom: 18,
+                    }} />
+                    <div style={{ display: "flex", gap: 10 }}>
+                      <button onClick={handleStartDosing} disabled={pumpRunning || !connected} style={{
+                        flex: 1, padding: "12px", borderRadius: 10, border: "none", background: connected ? "#22c55e" : th.border,
+                        color: "#fff", fontWeight: 700, fontSize: 16, cursor: connected ? "pointer" : "not-allowed", fontFamily: "inherit",
+                        opacity: pumpRunning ? 0.6 : 1,
+                      }}>{pumpRunning ? "Starting..." : `Start ${pumpMode}`}</button>
+                      <button onClick={handleStopDosing} disabled={pumpRunning} style={{
+                        flex: 1, padding: "12px", borderRadius: 10, border: "none", background: th.danger,
+                        color: "#fff", fontWeight: 700, fontSize: 16, cursor: "pointer", fontFamily: "inherit",
+                        opacity: pumpRunning ? 0.6 : 1,
+                      }}>Stop</button>
+                    </div>
+                  </div>
+                )}
+
+                <div style={{ marginTop: 16, padding: "12px 14px", background: th.bgAlt, borderRadius: 8, fontSize: 14, color: th.textMuted, lineHeight: 1.6 }}>
+                  {pumpMode === "manual" && "Sends a single dose command to all online reactors. Make sure pumps are calibrated first."}
+                  {pumpMode === "chemostat" && "Exchanges a fixed volume of media at regular intervals. The culture reaches nutrient equilibrium over time."}
+                  {pumpMode === "turbidostat" && "Monitors OD and dilutes when the target is exceeded, keeping cell density constant. Great for heterogeneity studies."}
+                </div>
               </div>
+
+              {/* Activity Log */}
+              <div style={{ background: th.surface, border: `1px solid ${th.border}`, borderRadius: 14, padding: "22px 24px", boxShadow: th.shadow }}>
+                <h3 style={{ margin: "0 0 14px", fontSize: 19, fontWeight: 700, color: th.text }}>Activity Log</h3>
+                <div style={{ maxHeight: 340, overflowY: "auto", fontSize: 14, fontFamily: "'JetBrains Mono',monospace" }}>
+                  {pumpLog.length === 0 ? (
+                    <div style={{ color: th.textMuted, textAlign: "center", padding: "40px 0" }}>No dosing activity yet</div>
+                  ) : pumpLog.map((entry, i) => (
+                    <div key={i} style={{ padding: "8px 0", borderBottom: `1px solid ${th.borderLight}`, color: th.textSecondary }}>
+                      <span style={{ color: th.textMuted, marginRight: 10 }}>{entry.time}</span>
+                      {entry.msg}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Pump Setup Reference */}
+            <div style={{ marginTop: 20, display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14 }}>
+              {[
+                { label: "Media Pump", ch: "PWM 2", desc: "Adds fresh media to the vial" },
+                { label: "Waste Pump", ch: "PWM 4", desc: "Removes spent media from the vial" },
+                { label: "Alt-Media Pump", ch: "PWM 3", desc: "Alternative media for morbidostat experiments" },
+              ].map((p, i) => (
+                <div key={i} style={{ background: th.surface, border: `1px solid ${th.border}`, borderRadius: 12, padding: "16px 18px", boxShadow: th.shadow }}>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: th.text, marginBottom: 4 }}>{p.label}</div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: th.accent, background: th.accentLight, display: "inline-block", padding: "2px 8px", borderRadius: 6, marginBottom: 8 }}>{p.ch}</div>
+                  <div style={{ fontSize: 14, color: th.textSecondary }}>{p.desc}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Calibration reminder */}
+            <div style={{ marginTop: 16, padding: "14px 18px", background: th.bgAlt, borderRadius: 10, fontSize: 14, color: th.textSecondary, lineHeight: 1.7 }}>
+              <span style={{ fontWeight: 700, color: th.text }}>Calibration required:</span> SSH into the Pioreactor and run{" "}
+              <code style={{ background: th.surface, padding: "2px 8px", borderRadius: 5, fontFamily: "'JetBrains Mono',monospace", fontSize: 13, color: th.accent }}>
+                pio calibrations run --device media_pump
+              </code>{" "}
+              before using dosing automations. You need a scale accurate to 0.1g.
             </div>
           </div>
         )}
