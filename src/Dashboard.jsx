@@ -2193,21 +2193,20 @@ export default function App() {
     if (experiment && connected) {
       const expEnc = encodeURIComponent(experiment.experiment);
       const onlineR = reactors.filter((r) => r.status === "online");
+      // Map pump selection to correct Pioreactor job name
+      const jobMap = { media: "add_media", waste: "remove_waste", alt_media: "add_alt_media" };
+      const jobName = jobMap[manualPump] || "add_media";
       await Promise.allSettled(
         onlineR.map((r) =>
           pioFetch(
             buildApiUrl(
-              `/api/workers/${encodeURIComponent(r.id)}/jobs/run/job_name/dosing_automation/experiments/${expEnc}`,
+              `/api/workers/${encodeURIComponent(r.id)}/jobs/run/job_name/${jobName}/experiments/${expEnc}`,
             ),
             {
-              method: "POST",
+              method: "PATCH",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
-                options: {
-                  automation_name: "continuous_cycle",
-                  volume: parseFloat(pumpVolume),
-                  duration: 9999,
-                },
+                options: { ml: String(parseFloat(pumpVolume)) },
               }),
             },
           ),
