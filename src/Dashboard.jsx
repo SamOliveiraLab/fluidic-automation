@@ -303,39 +303,12 @@ const usePioreactorData = () => {
     setConnected(true);
     const workers = transformWorkers(workersRaw);
 
-    // Check reachability for each active worker
-    const reachResults = await Promise.allSettled(
-      workers.filter(w => w.status === "online").map(async (w) => {
-        try {
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 4000);
-          const res = await pioFetch(buildApiUrl(`/api/workers/${encodeURIComponent(w.id)}/jobs/running`), { signal: controller.signal });
-          clearTimeout(timeout);
-          return { id: w.id, reachable: !!res };
-        } catch {
-          return { id: w.id, reachable: false };
-        }
-      })
-    );
-    const reachMap = {};
-    reachResults.forEach(r => {
-      if (r.status === "fulfilled") reachMap[r.value.id] = r.value.reachable;
-    });
-
-    // Merge: only show as online if is_active AND reachable
-    const withReach = workers.map(w => {
-      if (w.status === "online" && reachMap[w.id] === false) {
-        return { ...w, status: "offline" };
-      }
-      return w;
-    });
-
-    // Apply localStorage overrides on top
+    // Apply localStorage overrides
     const overrides = statusOverridesRef.current;
-    const merged = withReach.map((w) =>
+    const withOverrides = workers.map((w) =>
       overrides[w.id] ? { ...w, status: overrides[w.id] } : w,
     );
-    setReactors(merged);
+    setReactors(withOverrides);
 
     // 2. Fetch experiments and select
     const expsRaw = await api("/api/experiments");
@@ -373,6 +346,29 @@ const usePioreactorData = () => {
     setOdData(transformTimeSeries(odRaw, workers));
     setTempData(transformTimeSeries(tempRaw, workers));
     setGrowthData(transformTimeSeries(growthRaw, workers));
+
+    // Update reactor status based on actual reachability:
+    // - Leader (index 0) is always reachable since we just talked to it
+    // - Other workers: check if they have ANY data in the time series
+    const workerHasData = (workerIdx) => {
+      const key = `r${String(workerIdx + 1).padStart(2, "0")}`;
+      const checkSeries = (raw) => {
+        if (!raw?.series?.length || !raw?.data?.length) return false;
+        const sIdx = raw.series.findIndex(s => {
+          const unitName = s.replace(/-\d+$/, "");
+          return workers[workerIdx] && unitName === workers[workerIdx].id;
+        });
+        return sIdx >= 0 && raw.data[sIdx]?.length > 0;
+      };
+      return checkSeries(odRaw) || checkSeries(tempRaw) || checkSeries(growthRaw);
+    };
+
+    setReactors(prev => prev.map((r, i) => {
+      if (r.status === "offline") return r; // is_active=0 or manually excluded
+      if (i === 0) return { ...r, status: "online" }; // leader is always reachable
+      // Other active workers: online if they have data, offline if not
+      return { ...r, status: workerHasData(i) ? "online" : "offline" };
+    }));
 
     // 4. Fetch logs
     const logsRaw = await api(`/api/experiments/${expName}/logs`);
