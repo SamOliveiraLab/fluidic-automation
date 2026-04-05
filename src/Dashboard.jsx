@@ -16,14 +16,19 @@ import {
    which forwards to the HTTP Pioreactor URL.
    ═══════════════════════════════════════════════════ */
 const DEFAULT_PIOREACTOR_URL =
-  import.meta.env.VITE_PIOREACTOR_URL || "https://controlling-adds-speak-stop.trycloudflare.com";
+  import.meta.env.VITE_PIOREACTOR_URL ||
+  "https://controlling-adds-speak-stop.trycloudflare.com";
 const getApiBase = () => {
   try {
     return localStorage.getItem("pioreactor_url") || DEFAULT_PIOREACTOR_URL;
-  } catch { return DEFAULT_PIOREACTOR_URL; }
+  } catch {
+    return DEFAULT_PIOREACTOR_URL;
+  }
 };
 const setApiBase = (url) => {
-  try { localStorage.setItem("pioreactor_url", url); } catch {}
+  try {
+    localStorage.setItem("pioreactor_url", url);
+  } catch {}
 };
 
 const buildApiUrl = (path) => {
@@ -72,16 +77,23 @@ const transformTimeSeries = (raw, workers) => {
     const shortKey = `r${String(workerIdx + 1).padStart(2, "0")}`;
     const label = workers[workerIdx]?.label || unitName;
     keyMap[i] = shortKey;
-    keys.push({ key: shortKey, label, s: `R-${String(workerIdx + 1).padStart(2, "0")}` });
+    keys.push({
+      key: shortKey,
+      label,
+      s: `R-${String(workerIdx + 1).padStart(2, "0")}`,
+    });
   });
 
-  let minTs = Infinity, maxTs = -Infinity;
-  raw.data.forEach((s) => s.forEach((p) => {
-    const ms = new Date(p.x).getTime();
-    if (ms < minTs) minTs = ms;
-    if (ms > maxTs) maxTs = ms;
-  }));
-  const showDate = (maxTs - minTs) > 24 * 60 * 60 * 1000;
+  let minTs = Infinity,
+    maxTs = -Infinity;
+  raw.data.forEach((s) =>
+    s.forEach((p) => {
+      const ms = new Date(p.x).getTime();
+      if (ms < minTs) minTs = ms;
+      if (ms > maxTs) maxTs = ms;
+    }),
+  );
+  const showDate = maxTs - minTs > 24 * 60 * 60 * 1000;
 
   const timeMap = {};
   raw.data.forEach((seriesData, seriesIdx) => {
@@ -90,7 +102,8 @@ const transformTimeSeries = (raw, workers) => {
       const d = new Date(point.x);
       const ts = d.getTime();
       const timeStr = showDate
-        ? d.toLocaleDateString("en-GB", { month: "short", day: "numeric" }) + " " +
+        ? d.toLocaleDateString("en-GB", { month: "short", day: "numeric" }) +
+          " " +
           d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })
         : d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
       const bucket = showDate ? `${ts}` : timeStr;
@@ -137,7 +150,9 @@ const usePioreactorData = () => {
   const [allExperiments, setAllExperiments] = useState([]);
   const [selectedExpName, setSelectedExpName] = useState(null); // null = use latest
   const selectedExpRef = useRef(selectedExpName);
-  useEffect(() => { selectedExpRef.current = selectedExpName; }, [selectedExpName]);
+  useEffect(() => {
+    selectedExpRef.current = selectedExpName;
+  }, [selectedExpName]);
   const [reactors, setReactors] = useState([]);
   const [odData, setOdData] = useState({ data: [], keys: [] });
   const [tempData, setTempData] = useState({ data: [], keys: [] });
@@ -146,17 +161,26 @@ const usePioreactorData = () => {
   const [lastFetch, setLastFetch] = useState(null);
   const [timeRange, setTimeRange] = useState({ start: "", end: "" });
   const timeRangeRef = useRef(timeRange);
-  useEffect(() => { timeRangeRef.current = timeRange; }, [timeRange]);
+  useEffect(() => {
+    timeRangeRef.current = timeRange;
+  }, [timeRange]);
 
   // Persist overrides to localStorage so they survive page refresh
   const loadOverrides = () => {
     try {
       const saved = localStorage.getItem("pioreactor_status_overrides");
       return saved ? JSON.parse(saved) : {};
-    } catch { return {}; }
+    } catch {
+      return {};
+    }
   };
   const saveOverrides = (overrides) => {
-    try { localStorage.setItem("pioreactor_status_overrides", JSON.stringify(overrides)); } catch {}
+    try {
+      localStorage.setItem(
+        "pioreactor_status_overrides",
+        JSON.stringify(overrides),
+      );
+    } catch {}
   };
   const statusOverridesRef = useRef(loadOverrides());
 
@@ -187,7 +211,8 @@ const usePioreactorData = () => {
     setAllExperiments(expsRaw);
     const selName = selectedExpRef.current;
     const activeExp = selName
-      ? expsRaw.find(e => e.experiment === selName) || expsRaw[expsRaw.length - 1]
+      ? expsRaw.find((e) => e.experiment === selName) ||
+        expsRaw[expsRaw.length - 1]
       : expsRaw[expsRaw.length - 1];
     setExperiment(activeExp);
     const expName = encodeURIComponent(activeExp.experiment);
@@ -199,9 +224,15 @@ const usePioreactorData = () => {
       (tr.end ? `&end=${encodeURIComponent(tr.end)}` : "");
     const modN = !tr.start && !tr.end ? 1 : 5;
     const [odRaw, tempRaw, growthRaw] = await Promise.all([
-      api(`/api/experiments/${expName}/time_series/od_readings?filter_mod_N=${modN}${rangeQ}`),
-      api(`/api/experiments/${expName}/time_series/temperature_readings?filter_mod_N=${modN}${rangeQ}`),
-      api(`/api/experiments/${expName}/time_series/growth_rates?filter_mod_N=${modN}${rangeQ}`),
+      api(
+        `/api/experiments/${expName}/time_series/od_readings?filter_mod_N=${modN}${rangeQ}`,
+      ),
+      api(
+        `/api/experiments/${expName}/time_series/temperature_readings?filter_mod_N=${modN}${rangeQ}`,
+      ),
+      api(
+        `/api/experiments/${expName}/time_series/growth_rates?filter_mod_N=${modN}${rangeQ}`,
+      ),
     ]);
 
     setOdData(transformTimeSeries(odRaw, workers));
@@ -282,11 +313,14 @@ const usePioreactorData = () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ is_active: newActive }),
       }).catch(() => {});
-      pioFetch(buildApiUrl(`/api/workers/${encodeURIComponent(id)}/is_active`), {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ is_active: newActive }),
-      }).catch(() => {});
+      pioFetch(
+        buildApiUrl(`/api/workers/${encodeURIComponent(id)}/is_active`),
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ is_active: newActive }),
+        },
+      ).catch(() => {});
       return prev.map((r) => (r.id === id ? { ...r, status: newStatus } : r));
     });
   };
@@ -295,35 +329,52 @@ const usePioreactorData = () => {
   const startJob = async (jobName, options = {}) => {
     if (!experiment) return { success: false, error: "No active experiment" };
     const expEnc = encodeURIComponent(experiment.experiment);
-    const onlineReactors = reactors.filter(r => r.status === "online");
-    if (!onlineReactors.length) return { success: false, error: "No online bioreactors" };
-    
+    const onlineReactors = reactors.filter((r) => r.status === "online");
+    if (!onlineReactors.length)
+      return { success: false, error: "No online bioreactors" };
+
     const results = await Promise.allSettled(
-      onlineReactors.map(r =>
-        pioFetch(buildApiUrl(`/api/workers/${encodeURIComponent(r.id)}/jobs/run/job_name/${jobName}/experiments/${expEnc}`), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ options }),
-        })
-      )
+      onlineReactors.map((r) =>
+        pioFetch(
+          buildApiUrl(
+            `/api/workers/${encodeURIComponent(r.id)}/jobs/run/job_name/${jobName}/experiments/${expEnc}`,
+          ),
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ options }),
+          },
+        ),
+      ),
     );
-    const succeeded = results.filter(r => r.status === "fulfilled" && r.value?.ok).length;
+    const succeeded = results.filter(
+      (r) => r.status === "fulfilled" && r.value?.ok,
+    ).length;
     // Refresh data after a short delay to pick up new readings
     setTimeout(fetchAll, 3000);
-    return { success: succeeded > 0, started: succeeded, total: onlineReactors.length };
+    return {
+      success: succeeded > 0,
+      started: succeeded,
+      total: onlineReactors.length,
+    };
   };
 
   // Stop a job on all online workers
   const stopJob = async (jobName) => {
     if (!experiment) return;
     const expEnc = encodeURIComponent(experiment.experiment);
-    const onlineReactors = reactors.filter(r => r.status === "online");
+    const onlineReactors = reactors.filter((r) => r.status === "online");
     await Promise.allSettled(
-      onlineReactors.map(r =>
-        pioFetch(buildApiUrl(`/api/workers/${encodeURIComponent(r.id)}/jobs/stop/job_name/${jobName}/experiments/${expEnc}`), {
-          method: "POST",
-        })
-      )
+      onlineReactors.map((r) =>
+        pioFetch(
+          buildApiUrl(
+            `/api/workers/${encodeURIComponent(r.id)}/jobs/stop/job_name/${jobName}/experiments/${expEnc}`,
+          ),
+          {
+            method: "POST",
+          },
+        ),
+      ),
     );
     setTimeout(fetchAll, 2000);
   };
@@ -1427,7 +1478,15 @@ const AddReactorModal = ({ open, onClose, onAdd, th }) => {
 };
 
 /* ─── ANIMATED BIOREACTOR VIAL ─── */
-const AnimatedVial = ({ th, odValue = 0, tempValue = 0, stirringRpm = 0, growthRate = 0, pumpActive = false, reactorName = "" }) => {
+const AnimatedVial = ({
+  th,
+  odValue = 0,
+  tempValue = 0,
+  stirringRpm = 0,
+  growthRate = 0,
+  pumpActive = false,
+  reactorName = "",
+}) => {
   const [cells, setCells] = useState([]);
   const [tick, setTick] = useState(0);
   const animRef = useRef(null);
@@ -1435,20 +1494,22 @@ const AnimatedVial = ({ th, odValue = 0, tempValue = 0, stirringRpm = 0, growthR
   // Generate cells based on OD
   useEffect(() => {
     const count = Math.min(Math.max(Math.round(odValue * 40), 3), 80);
-    setCells(prev => {
+    setCells((prev) => {
       if (Math.abs(prev.length - count) < 3) return prev;
       const arr = [];
       for (let i = 0; i < count; i++) {
         const existing = prev[i];
-        arr.push(existing || {
-          x: 30 + Math.random() * 140,
-          y: 60 + Math.random() * 120,
-          r: 2 + Math.random() * 3,
-          vx: (Math.random() - 0.5) * 0.5,
-          vy: (Math.random() - 0.5) * 0.3,
-          hue: 90 + Math.random() * 40,
-          phase: Math.random() * Math.PI * 2,
-        });
+        arr.push(
+          existing || {
+            x: 30 + Math.random() * 140,
+            y: 60 + Math.random() * 120,
+            r: 2 + Math.random() * 3,
+            vx: (Math.random() - 0.5) * 0.5,
+            vy: (Math.random() - 0.5) * 0.3,
+            hue: 90 + Math.random() * 40,
+            phase: Math.random() * Math.PI * 2,
+          },
+        );
       }
       return arr;
     });
@@ -1458,7 +1519,7 @@ const AnimatedVial = ({ th, odValue = 0, tempValue = 0, stirringRpm = 0, growthR
   useEffect(() => {
     let raf;
     const animate = () => {
-      setTick(t => t + 1);
+      setTick((t) => t + 1);
       raf = requestAnimationFrame(animate);
     };
     raf = requestAnimationFrame(animate);
@@ -1469,12 +1530,18 @@ const AnimatedVial = ({ th, odValue = 0, tempValue = 0, stirringRpm = 0, growthR
   const stirFactor = Math.min(stirringRpm / 400, 2);
   const movedCells = cells.map((c, i) => {
     const swirl = stirFactor * 0.8;
-    const cx = 100, cy = 130;
-    const dx = c.x - cx, dy = c.y - cy;
+    const cx = 100,
+      cy = 130;
+    const dx = c.x - cx,
+      dy = c.y - cy;
     const angle = Math.atan2(dy, dx) + swirl * 0.02;
     const dist = Math.sqrt(dx * dx + dy * dy);
     let nx = cx + Math.cos(angle) * dist + c.vx * (1 + swirl);
-    let ny = cy + Math.sin(angle) * dist + c.vy + Math.sin(tick * 0.03 + c.phase) * 0.3;
+    let ny =
+      cy +
+      Math.sin(angle) * dist +
+      c.vy +
+      Math.sin(tick * 0.03 + c.phase) * 0.3;
     // Bounds
     if (nx < 32) nx = 32 + Math.random() * 4;
     if (nx > 168) nx = 168 - Math.random() * 4;
@@ -1489,15 +1556,46 @@ const AnimatedVial = ({ th, odValue = 0, tempValue = 0, stirringRpm = 0, growthR
   const liquidColorDark = `hsl(${200 - tempNorm * 60}, ${40 + tempNorm * 15}%, ${35 - tempNorm * 5}%)`;
 
   // Growth indicator
-  const growthColor = growthRate > 0.02 ? "#22c55e" : growthRate > 0 ? "#eab308" : "#94a3b8";
+  const growthColor =
+    growthRate > 0.02 ? "#22c55e" : growthRate > 0 ? "#eab308" : "#94a3b8";
 
   return (
-    <div style={{ background: th.surface, border: `1px solid ${th.border}`, borderRadius: 14, padding: "16px 20px", boxShadow: th.shadow }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-        <div style={{ fontSize: 16, fontWeight: 700, color: th.text }}>{reactorName || "Bioreactor Vial"}</div>
+    <div
+      style={{
+        background: th.surface,
+        border: `1px solid ${th.border}`,
+        borderRadius: 14,
+        padding: "16px 20px",
+        boxShadow: th.shadow,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: 8,
+        }}
+      >
+        <div style={{ fontSize: 16, fontWeight: 700, color: th.text }}>
+          {reactorName || "Bioreactor Vial"}
+        </div>
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          <div style={{ width: 8, height: 8, borderRadius: "50%", background: growthColor }} />
-          <span style={{ fontSize: 12, color: th.textMuted, fontFamily: "'JetBrains Mono',monospace" }}>
+          <div
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: "50%",
+              background: growthColor,
+            }}
+          />
+          <span
+            style={{
+              fontSize: 12,
+              color: th.textMuted,
+              fontFamily: "'JetBrains Mono',monospace",
+            }}
+          >
             GR: {growthRate?.toFixed(4) || "---"}
           </span>
         </div>
@@ -1508,58 +1606,153 @@ const AnimatedVial = ({ th, odValue = 0, tempValue = 0, stirringRpm = 0, growthR
           <clipPath id={`vialClip-${reactorName}`}>
             <rect x="28" y="20" width="144" height="175" rx="10" />
           </clipPath>
-          <linearGradient id={`liquidGrad-${reactorName}`} x1="0" y1="0" x2="0" y2="1">
+          <linearGradient
+            id={`liquidGrad-${reactorName}`}
+            x1="0"
+            y1="0"
+            x2="0"
+            y2="1"
+          >
             <stop offset="0%" stopColor={liquidColor} stopOpacity="0.6" />
             <stop offset="100%" stopColor={liquidColor} stopOpacity="0.9" />
           </linearGradient>
         </defs>
 
         {/* Vial outline */}
-        <rect x="28" y="20" width="144" height="175" rx="10" fill="none" stroke={th.border} strokeWidth="2" />
+        <rect
+          x="28"
+          y="20"
+          width="144"
+          height="175"
+          rx="10"
+          fill="none"
+          stroke={th.border}
+          strokeWidth="2"
+        />
 
         {/* Cap */}
-        <rect x="60" y="8" width="80" height="18" rx="4" fill={th.textMuted} opacity="0.3" />
+        <rect
+          x="60"
+          y="8"
+          width="80"
+          height="18"
+          rx="4"
+          fill={th.textMuted}
+          opacity="0.3"
+        />
         {/* Cap ports */}
         <circle cx="78" cy="10" r="3" fill={th.textMuted} opacity="0.4" />
         <circle cx="122" cy="10" r="3" fill={th.textMuted} opacity="0.4" />
 
         {/* Liquid fill */}
-        <rect x="29" y="55" width="142" height="139" rx="9" fill={`url(#liquidGrad-${reactorName})`} clipPath={`url(#vialClip-${reactorName})`} />
+        <rect
+          x="29"
+          y="55"
+          width="142"
+          height="139"
+          rx="9"
+          fill={`url(#liquidGrad-${reactorName})`}
+          clipPath={`url(#vialClip-${reactorName})`}
+        />
 
         {/* Liquid surface wave */}
-        <path d={`M29,${55 + Math.sin(tick * 0.05) * 1.5} Q100,${52 + Math.sin(tick * 0.05 + 1) * 2 * (1 + stirFactor * 0.3)} 171,${55 + Math.sin(tick * 0.05 + 2) * 1.5}`} stroke={liquidColor} strokeWidth="2" fill="none" opacity="0.7" />
+        <path
+          d={`M29,${55 + Math.sin(tick * 0.05) * 1.5} Q100,${52 + Math.sin(tick * 0.05 + 1) * 2 * (1 + stirFactor * 0.3)} 171,${55 + Math.sin(tick * 0.05 + 2) * 1.5}`}
+          stroke={liquidColor}
+          strokeWidth="2"
+          fill="none"
+          opacity="0.7"
+        />
 
         {/* Bacteria cells */}
         <g clipPath={`url(#vialClip-${reactorName})`}>
           {movedCells.map((c, i) => (
             <g key={i}>
-              <ellipse cx={c.x} cy={c.y} rx={c.r} ry={c.r * 0.7} fill={`hsl(${c.hue}, 60%, 50%)`} opacity="0.75"
-                transform={`rotate(${(tick * (stirFactor + 0.2) + i * 37) % 360}, ${c.x}, ${c.y})`} />
+              <ellipse
+                cx={c.x}
+                cy={c.y}
+                rx={c.r}
+                ry={c.r * 0.7}
+                fill={`hsl(${c.hue}, 60%, 50%)`}
+                opacity="0.75"
+                transform={`rotate(${(tick * (stirFactor + 0.2) + i * 37) % 360}, ${c.x}, ${c.y})`}
+              />
               {growthRate > 0.01 && i % 5 === 0 && (
-                <ellipse cx={c.x + c.r * 0.8} cy={c.y} rx={c.r * 0.5} ry={c.r * 0.35} fill={`hsl(${c.hue}, 60%, 55%)`} opacity="0.5"
-                  transform={`rotate(${(tick * (stirFactor + 0.2) + i * 37) % 360}, ${c.x}, ${c.y})`} />
+                <ellipse
+                  cx={c.x + c.r * 0.8}
+                  cy={c.y}
+                  rx={c.r * 0.5}
+                  ry={c.r * 0.35}
+                  fill={`hsl(${c.hue}, 60%, 55%)`}
+                  opacity="0.5"
+                  transform={`rotate(${(tick * (stirFactor + 0.2) + i * 37) % 360}, ${c.x}, ${c.y})`}
+                />
               )}
             </g>
           ))}
         </g>
 
         {/* Stir bar */}
-        <rect x={100 - 15} y="182" width="30" height="4" rx="2" fill={th.textMuted} opacity="0.5"
-          transform={`rotate(${(tick * stirFactor * 2) % 360}, 100, 184)`} />
+        <rect
+          x={100 - 15}
+          y="182"
+          width="30"
+          height="4"
+          rx="2"
+          fill={th.textMuted}
+          opacity="0.5"
+          transform={`rotate(${(tick * stirFactor * 2) % 360}, 100, 184)`}
+        />
 
         {/* Pump flow indicators */}
         {pumpActive && (
           <>
-            <line x1="20" y1="80" x2="28" y2="80" stroke="#3b82f6" strokeWidth="2" strokeDasharray="3,3" strokeDashoffset={-tick % 6} />
-            <line x1="172" y1="100" x2="180" y2="100" stroke="#ef4444" strokeWidth="2" strokeDasharray="3,3" strokeDashoffset={tick % 6} />
-            <text x="12" y="75" fontSize="7" fill="#3b82f6" textAnchor="middle">IN</text>
-            <text x="188" y="95" fontSize="7" fill="#ef4444" textAnchor="middle">OUT</text>
+            <line
+              x1="20"
+              y1="80"
+              x2="28"
+              y2="80"
+              stroke="#3b82f6"
+              strokeWidth="2"
+              strokeDasharray="3,3"
+              strokeDashoffset={-tick % 6}
+            />
+            <line
+              x1="172"
+              y1="100"
+              x2="180"
+              y2="100"
+              stroke="#ef4444"
+              strokeWidth="2"
+              strokeDasharray="3,3"
+              strokeDashoffset={tick % 6}
+            />
+            <text x="12" y="75" fontSize="7" fill="#3b82f6" textAnchor="middle">
+              IN
+            </text>
+            <text
+              x="188"
+              y="95"
+              fontSize="7"
+              fill="#ef4444"
+              textAnchor="middle"
+            >
+              OUT
+            </text>
           </>
         )}
 
         {/* Data readouts */}
-        <text x="100" y="210" textAnchor="middle" fontSize="9" fill={th.textMuted} fontFamily="'JetBrains Mono',monospace">
-          OD: {odValue?.toFixed(3) || "---"} · {tempValue?.toFixed(1) || "--"}°C · {stirringRpm || 0} RPM
+        <text
+          x="100"
+          y="210"
+          textAnchor="middle"
+          fontSize="9"
+          fill={th.textMuted}
+          fontFamily="'JetBrains Mono',monospace"
+        >
+          OD: {odValue?.toFixed(3) || "---"} · {tempValue?.toFixed(1) || "--"}°C
+          · {stirringRpm || 0} RPM
         </text>
       </svg>
     </div>
@@ -1592,7 +1785,11 @@ const TimeRangeBar = ({ th, timeRange, setTimeRange, refresh }) => {
     ? "Live"
     : presets.find((p) => {
         if (!p.h || !timeRange.start) return false;
-        return Math.abs((new Date(timeRange.end) - new Date(timeRange.start)) - p.h * 3600000) < 60000;
+        return (
+          Math.abs(
+            new Date(timeRange.end) - new Date(timeRange.start) - p.h * 3600000,
+          ) < 60000
+        );
       })?.label || "custom";
   const toLocal = (iso) => {
     if (!iso) return "";
@@ -1602,16 +1799,107 @@ const TimeRangeBar = ({ th, timeRange, setTimeRange, refresh }) => {
   };
   const fromLocal = (val) => (val ? new Date(val).toISOString() : "");
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 16, padding: "12px 16px", background: th.surface, border: `1px solid ${th.border}`, borderRadius: 12, boxShadow: th.shadow }}>
-      <span style={{ fontSize: 14, fontWeight: 600, color: th.textMuted, textTransform: "uppercase", letterSpacing: "0.06em", marginRight: 4 }}>Time Range</span>
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        flexWrap: "wrap",
+        marginBottom: 16,
+        padding: "12px 16px",
+        background: th.surface,
+        border: `1px solid ${th.border}`,
+        borderRadius: 12,
+        boxShadow: th.shadow,
+      }}
+    >
+      <span
+        style={{
+          fontSize: 14,
+          fontWeight: 600,
+          color: th.textMuted,
+          textTransform: "uppercase",
+          letterSpacing: "0.06em",
+          marginRight: 4,
+        }}
+      >
+        Time Range
+      </span>
       {presets.map((p) => (
-        <button key={p.label} onClick={() => applyPreset(p)} style={{ padding: "5px 12px", borderRadius: 7, border: `1px solid ${activePreset === p.label ? th.accent : th.border}`, background: activePreset === p.label ? th.accent : th.bgAlt, color: activePreset === p.label ? "#fff" : th.textSecondary, fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{p.label}</button>
+        <button
+          key={p.label}
+          onClick={() => applyPreset(p)}
+          style={{
+            padding: "5px 12px",
+            borderRadius: 7,
+            border: `1px solid ${activePreset === p.label ? th.accent : th.border}`,
+            background: activePreset === p.label ? th.accent : th.bgAlt,
+            color: activePreset === p.label ? "#fff" : th.textSecondary,
+            fontSize: 14,
+            fontWeight: 600,
+            cursor: "pointer",
+            fontFamily: "inherit",
+          }}
+        >
+          {p.label}
+        </button>
       ))}
-      <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: 8 }}>
-        <input type="datetime-local" value={toLocal(timeRange.start)} onChange={(e) => { const s = fromLocal(e.target.value); setTimeRange((prev) => ({ ...prev, start: s })); }} style={{ padding: "4px 8px", borderRadius: 6, border: `1px solid ${th.border}`, background: th.bgAlt, color: th.text, fontSize: 13, fontFamily: "'JetBrains Mono',monospace", outline: "none" }} />
+      <div
+        style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: 8 }}
+      >
+        <input
+          type="datetime-local"
+          value={toLocal(timeRange.start)}
+          onChange={(e) => {
+            const s = fromLocal(e.target.value);
+            setTimeRange((prev) => ({ ...prev, start: s }));
+          }}
+          style={{
+            padding: "4px 8px",
+            borderRadius: 6,
+            border: `1px solid ${th.border}`,
+            background: th.bgAlt,
+            color: th.text,
+            fontSize: 13,
+            fontFamily: "'JetBrains Mono',monospace",
+            outline: "none",
+          }}
+        />
         <span style={{ color: th.textMuted, fontSize: 13 }}>→</span>
-        <input type="datetime-local" value={toLocal(timeRange.end)} onChange={(e) => { const en = fromLocal(e.target.value); setTimeRange((prev) => ({ ...prev, end: en })); }} style={{ padding: "4px 8px", borderRadius: 6, border: `1px solid ${th.border}`, background: th.bgAlt, color: th.text, fontSize: 13, fontFamily: "'JetBrains Mono',monospace", outline: "none" }} />
-        <button onClick={refresh} style={{ padding: "5px 12px", borderRadius: 7, border: `1px solid ${th.accent}`, background: th.accent, color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Go</button>
+        <input
+          type="datetime-local"
+          value={toLocal(timeRange.end)}
+          onChange={(e) => {
+            const en = fromLocal(e.target.value);
+            setTimeRange((prev) => ({ ...prev, end: en }));
+          }}
+          style={{
+            padding: "4px 8px",
+            borderRadius: 6,
+            border: `1px solid ${th.border}`,
+            background: th.bgAlt,
+            color: th.text,
+            fontSize: 13,
+            fontFamily: "'JetBrains Mono',monospace",
+            outline: "none",
+          }}
+        />
+        <button
+          onClick={refresh}
+          style={{
+            padding: "5px 12px",
+            borderRadius: 7,
+            border: `1px solid ${th.accent}`,
+            background: th.accent,
+            color: "#fff",
+            fontSize: 13,
+            fontWeight: 600,
+            cursor: "pointer",
+            fontFamily: "inherit",
+          }}
+        >
+          Go
+        </button>
       </div>
     </div>
   );
@@ -1657,14 +1945,21 @@ export default function App() {
     try {
       const saved = localStorage.getItem("culture_labels");
       return saved ? JSON.parse(saved) : {};
-    } catch { return {}; }
+    } catch {
+      return {};
+    }
   };
   const [cultureLabels, setCultureLabels] = useState(getCultureLabels);
   const saveCultureLabel = (reactorId, label) => {
     const expKey = experiment?.experiment || "_default";
-    setCultureLabels(prev => {
-      const next = { ...prev, [expKey]: { ...(prev[expKey] || {}), [reactorId]: label } };
-      try { localStorage.setItem("culture_labels", JSON.stringify(next)); } catch {}
+    setCultureLabels((prev) => {
+      const next = {
+        ...prev,
+        [expKey]: { ...(prev[expKey] || {}), [reactorId]: label },
+      };
+      try {
+        localStorage.setItem("culture_labels", JSON.stringify(next));
+      } catch {}
       return next;
     });
   };
@@ -1691,26 +1986,42 @@ export default function App() {
   const [pumpLog, setPumpLog] = useState([]);
   const [manualPump, setManualPump] = useState("media"); // media, waste, alt_media
 
-  const addPumpLogEntry = (msg) => setPumpLog(prev => [{ time: new Date().toLocaleTimeString(), msg }, ...prev].slice(0, 50));
+  const addPumpLogEntry = (msg) =>
+    setPumpLog((prev) =>
+      [{ time: new Date().toLocaleTimeString(), msg }, ...prev].slice(0, 50),
+    );
 
   const handleManualDose = async () => {
     setPumpRunning(true);
     addPumpLogEntry(`Manual dose: ${manualPump} pump, ${pumpVolume} mL`);
     if (experiment && connected) {
       const expEnc = encodeURIComponent(experiment.experiment);
-      const onlineR = reactors.filter(r => r.status === "online");
+      const onlineR = reactors.filter((r) => r.status === "online");
       await Promise.allSettled(
-        onlineR.map(r =>
-          pioFetch(buildApiUrl(`/api/workers/${encodeURIComponent(r.id)}/jobs/run/job_name/dosing_automation/experiments/${expEnc}`), {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ options: { automation_name: "continuous_cycle", volume: parseFloat(pumpVolume), duration: 9999 } }),
-          })
-        )
+        onlineR.map((r) =>
+          pioFetch(
+            buildApiUrl(
+              `/api/workers/${encodeURIComponent(r.id)}/jobs/run/job_name/dosing_automation/experiments/${expEnc}`,
+            ),
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                options: {
+                  automation_name: "continuous_cycle",
+                  volume: parseFloat(pumpVolume),
+                  duration: 9999,
+                },
+              }),
+            },
+          ),
+        ),
       );
       addPumpLogEntry(`Dose sent to ${onlineR.length} reactor(s)`);
     } else {
-      addPumpLogEntry(`[DEMO] Would dose ${pumpVolume} mL via ${manualPump} pump`);
+      addPumpLogEntry(
+        `[DEMO] Would dose ${pumpVolume} mL via ${manualPump} pump`,
+      );
     }
     setPumpRunning(false);
     setTimeout(refresh, 3000);
@@ -1729,7 +2040,9 @@ export default function App() {
       opts.volume = parseFloat(pumpVolume);
       opts.duration = parseFloat(pumpDuration);
     }
-    addPumpLogEntry(`Starting ${pumpMode}: vol=${opts.volume}mL, dur=${opts.duration}min${opts.target_od ? `, OD=${opts.target_od}` : ""}`);
+    addPumpLogEntry(
+      `Starting ${pumpMode}: vol=${opts.volume}mL, dur=${opts.duration}min${opts.target_od ? `, OD=${opts.target_od}` : ""}`,
+    );
     if (experiment && connected) {
       await startJob("dosing_automation", opts);
       addPumpLogEntry(`${pumpMode} started on all online reactors`);
@@ -1750,17 +2063,17 @@ export default function App() {
   };
 
   const handleStartJob = async (jobName, options = {}) => {
-    setStarting(prev => ({ ...prev, [jobName]: true }));
+    setStarting((prev) => ({ ...prev, [jobName]: true }));
     const result = await startJob(jobName, options);
-    setStarting(prev => ({ ...prev, [jobName]: false }));
+    setStarting((prev) => ({ ...prev, [jobName]: false }));
     return result;
   };
 
   const [stopping, setStopping] = useState({});
   const handleStopJob = async (jobName) => {
-    setStopping(prev => ({ ...prev, [jobName]: true }));
+    setStopping((prev) => ({ ...prev, [jobName]: true }));
     await stopJob(jobName);
-    setStopping(prev => ({ ...prev, [jobName]: false }));
+    setStopping((prev) => ({ ...prev, [jobName]: false }));
   };
 
   const nav = [
@@ -1814,9 +2127,16 @@ export default function App() {
     emptySub: connected
       ? "Start OD Reading on your Pioreactors."
       : "Cannot reach Pioreactor API. Are you on the lab network?",
-    emptyAction: connected ? (starting.od_reading ? "Starting..." : "Start OD Reading →") : "Check Connection",
+    emptyAction: connected
+      ? starting.od_reading
+        ? "Starting..."
+        : "Start OD Reading →"
+      : "Check Connection",
     onEmptyAction: connected ? () => handleStartJob("od_reading") : undefined,
-    onStopAction: connected && odData.data.length > 0 ? () => handleStopJob("od_reading") : undefined,
+    onStopAction:
+      connected && odData.data.length > 0
+        ? () => handleStopJob("od_reading")
+        : undefined,
     stopLabel: stopping.od_reading ? "Stopping..." : "■ Stop OD",
   };
   const tempP = {
@@ -1841,10 +2161,21 @@ export default function App() {
       ? "Start Temperature Automation (Thermostat, e.g. 30°C). Works with water."
       : "Cannot reach Pioreactor API.",
     emptyAction: connected
-      ? (starting.temperature_automation ? "Starting..." : "Start Temperature Automation →")
+      ? starting.temperature_automation
+        ? "Starting..."
+        : "Start Temperature Automation →"
       : "Check Connection",
-    onEmptyAction: connected ? () => handleStartJob("temperature_automation", { automation_name: "thermostat", target_temperature: 30 }) : undefined,
-    onStopAction: connected && tempData.data.length > 0 ? () => handleStopJob("temperature_automation") : undefined,
+    onEmptyAction: connected
+      ? () =>
+          handleStartJob("temperature_automation", {
+            automation_name: "thermostat",
+            target_temperature: 30,
+          })
+      : undefined,
+    onStopAction:
+      connected && tempData.data.length > 0
+        ? () => handleStopJob("temperature_automation")
+        : undefined,
     stopLabel: stopping.temperature_automation ? "Stopping..." : "■ Stop Temp",
   };
   const grP = {
@@ -1871,9 +2202,18 @@ export default function App() {
     emptySub: connected
       ? "Requires Growth Rate activity AND organisms growing."
       : "Cannot reach Pioreactor API.",
-    emptyAction: connected ? (starting.growth_rate_calculating ? "Starting..." : "Start Growth Rate →") : "Check Connection",
-    onEmptyAction: connected ? () => handleStartJob("growth_rate_calculating") : undefined,
-    onStopAction: connected && growthData.data.length > 0 ? () => handleStopJob("growth_rate_calculating") : undefined,
+    emptyAction: connected
+      ? starting.growth_rate_calculating
+        ? "Starting..."
+        : "Start Growth Rate →"
+      : "Check Connection",
+    onEmptyAction: connected
+      ? () => handleStartJob("growth_rate_calculating")
+      : undefined,
+    onStopAction:
+      connected && growthData.data.length > 0
+        ? () => handleStopJob("growth_rate_calculating")
+        : undefined,
     stopLabel: stopping.growth_rate_calculating ? "Stopping..." : "■ Stop GR",
   };
 
@@ -2191,8 +2531,17 @@ export default function App() {
                 >
                   Connect
                 </button>
-                <div style={{ fontSize: 12, color: th.textMuted, marginTop: 6, lineHeight: 1.5 }}>
-                  {connected ? "✓ Connected" : "Enter your Pioreactor's address and click Connect. Must be on the same WiFi."}
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: th.textMuted,
+                    marginTop: 6,
+                    lineHeight: 1.5,
+                  }}
+                >
+                  {connected
+                    ? "✓ Connected"
+                    : "Enter your Pioreactor's address and click Connect. Must be on the same WiFi."}
                 </div>
               </div>
               <div
@@ -2350,26 +2699,85 @@ export default function App() {
         {page === "overview" && (
           <div style={{ padding: "24px" }}>
             {/* Experiment Selector Bar */}
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, padding: "12px 16px", background: th.surface, border: `1px solid ${th.border}`, borderRadius: 12, boxShadow: th.shadow, flexWrap: "wrap" }}>
-              <span style={{ fontSize: 14, fontWeight: 600, color: th.textMuted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Experiment</span>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                marginBottom: 16,
+                padding: "12px 16px",
+                background: th.surface,
+                border: `1px solid ${th.border}`,
+                borderRadius: 12,
+                boxShadow: th.shadow,
+                flexWrap: "wrap",
+              }}
+            >
+              <span
+                style={{
+                  fontSize: 14,
+                  fontWeight: 600,
+                  color: th.textMuted,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.06em",
+                }}
+              >
+                Experiment
+              </span>
               <select
                 value={experiment?.experiment || ""}
-                onChange={e => selectExperiment(e.target.value)}
-                style={{ padding: "6px 12px", borderRadius: 8, border: `1px solid ${th.border}`, background: th.bgAlt, color: th.text, fontSize: 15, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", minWidth: 200, outline: "none" }}
+                onChange={(e) => selectExperiment(e.target.value)}
+                style={{
+                  padding: "6px 12px",
+                  borderRadius: 8,
+                  border: `1px solid ${th.border}`,
+                  background: th.bgAlt,
+                  color: th.text,
+                  fontSize: 15,
+                  fontWeight: 600,
+                  fontFamily: "inherit",
+                  cursor: "pointer",
+                  minWidth: 200,
+                  outline: "none",
+                }}
               >
-                {allExperiments.map(exp => (
-                  <option key={exp.experiment} value={exp.experiment}>{exp.experiment}</option>
+                {allExperiments.map((exp) => (
+                  <option key={exp.experiment} value={exp.experiment}>
+                    {exp.experiment}
+                  </option>
                 ))}
               </select>
-              <button onClick={() => setShowNewExp(true)} style={{ padding: "6px 16px", borderRadius: 8, border: `1.5px solid ${th.accent}`, background: th.accentLight, color: th.accent, fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+              <button
+                onClick={() => setShowNewExp(true)}
+                style={{
+                  padding: "6px 16px",
+                  borderRadius: 8,
+                  border: `1.5px solid ${th.accent}`,
+                  background: th.accentLight,
+                  color: th.accent,
+                  fontSize: 14,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
                 + New Experiment
               </button>
               {experiment?.description && (
-                <span style={{ fontSize: 13, color: th.textMuted, marginLeft: 4 }}>{experiment.description}</span>
+                <span
+                  style={{ fontSize: 13, color: th.textMuted, marginLeft: 4 }}
+                >
+                  {experiment.description}
+                </span>
               )}
             </div>
 
-            <TimeRangeBar th={th} timeRange={timeRange} setTimeRange={setTimeRange} refresh={refresh} />
+            <TimeRangeBar
+              th={th}
+              timeRange={timeRange}
+              setTimeRange={setTimeRange}
+              refresh={refresh}
+            />
             <div
               style={{
                 display: "grid",
@@ -2484,12 +2892,19 @@ export default function App() {
                   </div>
                   <input
                     value={getCultureLabel(r.id)}
-                    onChange={e => saveCultureLabel(r.id, e.target.value)}
+                    onChange={(e) => saveCultureLabel(r.id, e.target.value)}
                     placeholder="Culture name..."
                     style={{
-                      marginTop: 6, width: "100%", padding: "5px 8px", borderRadius: 6,
-                      border: `1px solid ${th.borderLight}`, background: th.bgAlt, color: th.text,
-                      fontSize: 13, fontFamily: "inherit", outline: "none",
+                      marginTop: 6,
+                      width: "100%",
+                      padding: "5px 8px",
+                      borderRadius: 6,
+                      border: `1px solid ${th.borderLight}`,
+                      background: th.bgAlt,
+                      color: th.text,
+                      fontSize: 13,
+                      fontFamily: "inherit",
+                      outline: "none",
                     }}
                   />
                   {r.status === "warning" && (
@@ -2513,11 +2928,42 @@ export default function App() {
             </div>
 
             {/* Animated Bioreactor Vials */}
-            <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill,minmax(200px,1fr))`, gap: 14, marginBottom: 28 }}>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: `repeat(auto-fill,minmax(200px,1fr))`,
+                gap: 14,
+                marginBottom: 28,
+              }}
+            >
               {/* HARDCODED DEMO VIALS - remove these when real data is connected */}
-              <AnimatedVial th={th} reactorName="Pioreactor 01" odValue={0.85} tempValue={37} stirringRpm={450} growthRate={0.032} pumpActive={true} />
-              <AnimatedVial th={th} reactorName="Pioreactor 02" odValue={0.35} tempValue={30} stirringRpm={200} growthRate={0.008} pumpActive={false} />
-              <AnimatedVial th={th} reactorName="Pioreactor 03" odValue={1.6} tempValue={42} stirringRpm={600} growthRate={0.001} pumpActive={true} />
+              <AnimatedVial
+                th={th}
+                reactorName="Pioreactor 01"
+                odValue={0.85}
+                tempValue={37}
+                stirringRpm={450}
+                growthRate={0.032}
+                pumpActive={true}
+              />
+              <AnimatedVial
+                th={th}
+                reactorName="Pioreactor 02"
+                odValue={0.35}
+                tempValue={30}
+                stirringRpm={200}
+                growthRate={0.008}
+                pumpActive={false}
+              />
+              <AnimatedVial
+                th={th}
+                reactorName="Pioreactor 03"
+                odValue={1.6}
+                tempValue={42}
+                stirringRpm={600}
+                growthRate={0.001}
+                pumpActive={true}
+              />
             </div>
 
             <Chart th={th} {...odP} />
@@ -2818,19 +3264,34 @@ export default function App() {
 
         {page === "od" && (
           <div style={{ padding: "24px" }}>
-            <TimeRangeBar th={th} timeRange={timeRange} setTimeRange={setTimeRange} refresh={refresh} />
+            <TimeRangeBar
+              th={th}
+              timeRange={timeRange}
+              setTimeRange={setTimeRange}
+              refresh={refresh}
+            />
             <Chart th={th} {...odP} />
           </div>
         )}
         {page === "temp" && (
           <div style={{ padding: "24px" }}>
-            <TimeRangeBar th={th} timeRange={timeRange} setTimeRange={setTimeRange} refresh={refresh} />
+            <TimeRangeBar
+              th={th}
+              timeRange={timeRange}
+              setTimeRange={setTimeRange}
+              refresh={refresh}
+            />
             <Chart th={th} {...tempP} />
           </div>
         )}
         {page === "growth" && (
           <div style={{ padding: "24px" }}>
-            <TimeRangeBar th={th} timeRange={timeRange} setTimeRange={setTimeRange} refresh={refresh} />
+            <TimeRangeBar
+              th={th}
+              timeRange={timeRange}
+              setTimeRange={setTimeRange}
+              refresh={refresh}
+            />
             <Chart th={th} {...grP} />
           </div>
         )}
@@ -2839,43 +3300,147 @@ export default function App() {
           <div style={{ padding: "24px" }}>
             {/* Mode Selector */}
             <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-              {["manual", "chemostat", "turbidostat"].map(m => (
-                <button key={m} onClick={() => setPumpMode(m)} style={{
-                  padding: "10px 20px", borderRadius: 10, border: `1.5px solid ${pumpMode === m ? th.accent : th.border}`,
-                  background: pumpMode === m ? th.accentLight : th.surface, color: pumpMode === m ? th.accent : th.textSecondary,
-                  fontWeight: 700, fontSize: 15, cursor: "pointer", fontFamily: "inherit", textTransform: "capitalize",
-                }}>{m}</button>
+              {["manual", "chemostat", "turbidostat"].map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setPumpMode(m)}
+                  style={{
+                    padding: "10px 20px",
+                    borderRadius: 10,
+                    border: `1.5px solid ${pumpMode === m ? th.accent : th.border}`,
+                    background: pumpMode === m ? th.accentLight : th.surface,
+                    color: pumpMode === m ? th.accent : th.textSecondary,
+                    fontWeight: 700,
+                    fontSize: 15,
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                    textTransform: "capitalize",
+                  }}
+                >
+                  {m}
+                </button>
               ))}
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: 18,
+              }}
+            >
               {/* Control Panel */}
-              <div style={{ background: th.surface, border: `1px solid ${th.border}`, borderRadius: 14, padding: "22px 24px", boxShadow: th.shadow }}>
-                <h3 style={{ margin: "0 0 18px", fontSize: 19, fontWeight: 700, color: th.text }}>
-                  {pumpMode === "manual" ? "Manual Dosing" : pumpMode === "chemostat" ? "Chemostat Mode" : "Turbidostat Mode"}
+              <div
+                style={{
+                  background: th.surface,
+                  border: `1px solid ${th.border}`,
+                  borderRadius: 14,
+                  padding: "22px 24px",
+                  boxShadow: th.shadow,
+                }}
+              >
+                <h3
+                  style={{
+                    margin: "0 0 18px",
+                    fontSize: 19,
+                    fontWeight: 700,
+                    color: th.text,
+                  }}
+                >
+                  {pumpMode === "manual"
+                    ? "Manual Dosing"
+                    : pumpMode === "chemostat"
+                      ? "Chemostat Mode"
+                      : "Turbidostat Mode"}
                 </h3>
 
                 {pumpMode === "manual" && (
                   <div>
-                    <label style={{ fontSize: 14, fontWeight: 600, color: th.textSecondary, display: "block", marginBottom: 6 }}>Pump</label>
+                    <label
+                      style={{
+                        fontSize: 14,
+                        fontWeight: 600,
+                        color: th.textSecondary,
+                        display: "block",
+                        marginBottom: 6,
+                      }}
+                    >
+                      Pump
+                    </label>
                     <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
-                      {["media", "waste", "alt_media"].map(p => (
-                        <button key={p} onClick={() => setManualPump(p)} style={{
-                          padding: "8px 16px", borderRadius: 8, border: `1.5px solid ${manualPump === p ? th.accent : th.border}`,
-                          background: manualPump === p ? th.accentLight : "transparent", color: manualPump === p ? th.accent : th.textSecondary,
-                          fontWeight: 600, fontSize: 14, cursor: "pointer", fontFamily: "inherit", textTransform: "capitalize",
-                        }}>{p.replace("_", " ")}</button>
+                      {["media", "waste", "alt_media"].map((p) => (
+                        <button
+                          key={p}
+                          onClick={() => setManualPump(p)}
+                          style={{
+                            padding: "8px 16px",
+                            borderRadius: 8,
+                            border: `1.5px solid ${manualPump === p ? th.accent : th.border}`,
+                            background:
+                              manualPump === p ? th.accentLight : "transparent",
+                            color:
+                              manualPump === p ? th.accent : th.textSecondary,
+                            fontWeight: 600,
+                            fontSize: 14,
+                            cursor: "pointer",
+                            fontFamily: "inherit",
+                            textTransform: "capitalize",
+                          }}
+                        >
+                          {p.replace("_", " ")}
+                        </button>
                       ))}
                     </div>
-                    <label style={{ fontSize: 14, fontWeight: 600, color: th.textSecondary, display: "block", marginBottom: 6 }}>Volume (mL)</label>
-                    <input value={pumpVolume} onChange={e => setPumpVolume(e.target.value)} type="number" step="0.1" min="0" style={{
-                      width: "100%", padding: "10px 14px", borderRadius: 8, border: `1px solid ${th.border}`, background: th.bgAlt,
-                      color: th.text, fontSize: 16, fontFamily: "'JetBrains Mono',monospace", outline: "none", marginBottom: 18,
-                    }} />
-                    <button onClick={handleManualDose} disabled={pumpRunning} style={{
-                      width: "100%", padding: "12px", borderRadius: 10, border: "none", background: th.accent,
-                      color: "#fff", fontWeight: 700, fontSize: 16, cursor: connected ? "pointer" : "not-allowed", fontFamily: "inherit",
-                    }}>{pumpRunning ? "Dosing..." : `Dose ${pumpVolume} mL (${manualPump.replace("_"," ")})`}</button>
+                    <label
+                      style={{
+                        fontSize: 14,
+                        fontWeight: 600,
+                        color: th.textSecondary,
+                        display: "block",
+                        marginBottom: 6,
+                      }}
+                    >
+                      Volume (mL)
+                    </label>
+                    <input
+                      value={pumpVolume}
+                      onChange={(e) => setPumpVolume(e.target.value)}
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      style={{
+                        width: "100%",
+                        padding: "10px 14px",
+                        borderRadius: 8,
+                        border: `1px solid ${th.border}`,
+                        background: th.bgAlt,
+                        color: th.text,
+                        fontSize: 16,
+                        fontFamily: "'JetBrains Mono',monospace",
+                        outline: "none",
+                        marginBottom: 18,
+                      }}
+                    />
+                    <button
+                      onClick={handleManualDose}
+                      disabled={pumpRunning}
+                      style={{
+                        width: "100%",
+                        padding: "12px",
+                        borderRadius: 10,
+                        border: "none",
+                        background: th.accent,
+                        color: "#fff",
+                        fontWeight: 700,
+                        fontSize: 16,
+                        cursor: connected ? "pointer" : "not-allowed",
+                        fontFamily: "inherit",
+                      }}
+                    >
+                      {pumpRunning
+                        ? "Dosing..."
+                        : `Dose ${pumpVolume} mL (${manualPump.replace("_", " ")})`}
+                    </button>
                   </div>
                 )}
 
@@ -2883,83 +3448,317 @@ export default function App() {
                   <div>
                     {pumpMode === "turbidostat" && (
                       <>
-                        <label style={{ fontSize: 14, fontWeight: 600, color: th.textSecondary, display: "block", marginBottom: 6 }}>Target OD</label>
-                        <input value={pumpTargetOD} onChange={e => setPumpTargetOD(e.target.value)} type="number" step="0.1" min="0" style={{
-                          width: "100%", padding: "10px 14px", borderRadius: 8, border: `1px solid ${th.border}`, background: th.bgAlt,
-                          color: th.text, fontSize: 16, fontFamily: "'JetBrains Mono',monospace", outline: "none", marginBottom: 14,
-                        }} />
+                        <label
+                          style={{
+                            fontSize: 14,
+                            fontWeight: 600,
+                            color: th.textSecondary,
+                            display: "block",
+                            marginBottom: 6,
+                          }}
+                        >
+                          Target OD
+                        </label>
+                        <input
+                          value={pumpTargetOD}
+                          onChange={(e) => setPumpTargetOD(e.target.value)}
+                          type="number"
+                          step="0.1"
+                          min="0"
+                          style={{
+                            width: "100%",
+                            padding: "10px 14px",
+                            borderRadius: 8,
+                            border: `1px solid ${th.border}`,
+                            background: th.bgAlt,
+                            color: th.text,
+                            fontSize: 16,
+                            fontFamily: "'JetBrains Mono',monospace",
+                            outline: "none",
+                            marginBottom: 14,
+                          }}
+                        />
                       </>
                     )}
-                    <label style={{ fontSize: 14, fontWeight: 600, color: th.textSecondary, display: "block", marginBottom: 6 }}>Exchange Volume (mL)</label>
-                    <input value={pumpVolume} onChange={e => setPumpVolume(e.target.value)} type="number" step="0.1" min="0" style={{
-                      width: "100%", padding: "10px 14px", borderRadius: 8, border: `1px solid ${th.border}`, background: th.bgAlt,
-                      color: th.text, fontSize: 16, fontFamily: "'JetBrains Mono',monospace", outline: "none", marginBottom: 14,
-                    }} />
-                    <label style={{ fontSize: 14, fontWeight: 600, color: th.textSecondary, display: "block", marginBottom: 6 }}>Interval (minutes)</label>
-                    <input value={pumpDuration} onChange={e => setPumpDuration(e.target.value)} type="number" step="1" min="1" style={{
-                      width: "100%", padding: "10px 14px", borderRadius: 8, border: `1px solid ${th.border}`, background: th.bgAlt,
-                      color: th.text, fontSize: 16, fontFamily: "'JetBrains Mono',monospace", outline: "none", marginBottom: 18,
-                    }} />
+                    <label
+                      style={{
+                        fontSize: 14,
+                        fontWeight: 600,
+                        color: th.textSecondary,
+                        display: "block",
+                        marginBottom: 6,
+                      }}
+                    >
+                      Exchange Volume (mL)
+                    </label>
+                    <input
+                      value={pumpVolume}
+                      onChange={(e) => setPumpVolume(e.target.value)}
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      style={{
+                        width: "100%",
+                        padding: "10px 14px",
+                        borderRadius: 8,
+                        border: `1px solid ${th.border}`,
+                        background: th.bgAlt,
+                        color: th.text,
+                        fontSize: 16,
+                        fontFamily: "'JetBrains Mono',monospace",
+                        outline: "none",
+                        marginBottom: 14,
+                      }}
+                    />
+                    <label
+                      style={{
+                        fontSize: 14,
+                        fontWeight: 600,
+                        color: th.textSecondary,
+                        display: "block",
+                        marginBottom: 6,
+                      }}
+                    >
+                      Interval (minutes)
+                    </label>
+                    <input
+                      value={pumpDuration}
+                      onChange={(e) => setPumpDuration(e.target.value)}
+                      type="number"
+                      step="1"
+                      min="1"
+                      style={{
+                        width: "100%",
+                        padding: "10px 14px",
+                        borderRadius: 8,
+                        border: `1px solid ${th.border}`,
+                        background: th.bgAlt,
+                        color: th.text,
+                        fontSize: 16,
+                        fontFamily: "'JetBrains Mono',monospace",
+                        outline: "none",
+                        marginBottom: 18,
+                      }}
+                    />
                     <div style={{ display: "flex", gap: 10 }}>
-                      <button onClick={handleStartDosing} disabled={pumpRunning} style={{
-                        flex: 1, padding: "12px", borderRadius: 10, border: "none", background: "#22c55e",
-                        color: "#fff", fontWeight: 700, fontSize: 16, cursor: "pointer", fontFamily: "inherit",
-                        opacity: pumpRunning ? 0.6 : 1,
-                      }}>{pumpRunning ? "Starting..." : `Start ${pumpMode}`}</button>
-                      <button onClick={handleStopDosing} disabled={pumpRunning} style={{
-                        flex: 1, padding: "12px", borderRadius: 10, border: "none", background: th.danger,
-                        color: "#fff", fontWeight: 700, fontSize: 16, cursor: "pointer", fontFamily: "inherit",
-                        opacity: pumpRunning ? 0.6 : 1,
-                      }}>Stop</button>
+                      <button
+                        onClick={handleStartDosing}
+                        disabled={pumpRunning}
+                        style={{
+                          flex: 1,
+                          padding: "12px",
+                          borderRadius: 10,
+                          border: "none",
+                          background: "#22c55e",
+                          color: "#fff",
+                          fontWeight: 700,
+                          fontSize: 16,
+                          cursor: "pointer",
+                          fontFamily: "inherit",
+                          opacity: pumpRunning ? 0.6 : 1,
+                        }}
+                      >
+                        {pumpRunning ? "Starting..." : `Start ${pumpMode}`}
+                      </button>
+                      <button
+                        onClick={handleStopDosing}
+                        disabled={pumpRunning}
+                        style={{
+                          flex: 1,
+                          padding: "12px",
+                          borderRadius: 10,
+                          border: "none",
+                          background: th.danger,
+                          color: "#fff",
+                          fontWeight: 700,
+                          fontSize: 16,
+                          cursor: "pointer",
+                          fontFamily: "inherit",
+                          opacity: pumpRunning ? 0.6 : 1,
+                        }}
+                      >
+                        Stop
+                      </button>
                     </div>
                   </div>
                 )}
 
-                <div style={{ marginTop: 16, padding: "12px 14px", background: th.bgAlt, borderRadius: 8, fontSize: 14, color: th.textMuted, lineHeight: 1.6 }}>
-                  {pumpMode === "manual" && "Sends a single dose command to all online reactors. Make sure pumps are calibrated first."}
-                  {pumpMode === "chemostat" && "Exchanges a fixed volume of media at regular intervals. The culture reaches nutrient equilibrium over time."}
-                  {pumpMode === "turbidostat" && "Monitors OD and dilutes when the target is exceeded, keeping cell density constant. Great for heterogeneity studies."}
+                <div
+                  style={{
+                    marginTop: 16,
+                    padding: "12px 14px",
+                    background: th.bgAlt,
+                    borderRadius: 8,
+                    fontSize: 14,
+                    color: th.textMuted,
+                    lineHeight: 1.6,
+                  }}
+                >
+                  {pumpMode === "manual" &&
+                    "Sends a single dose command to all online reactors. Make sure pumps are calibrated first."}
+                  {pumpMode === "chemostat" &&
+                    "Exchanges a fixed volume of media at regular intervals. The culture reaches nutrient equilibrium over time."}
+                  {pumpMode === "turbidostat" &&
+                    "Monitors OD and dilutes when the target is exceeded, keeping cell density constant. Great for heterogeneity studies."}
                 </div>
               </div>
 
               {/* Activity Log */}
-              <div style={{ background: th.surface, border: `1px solid ${th.border}`, borderRadius: 14, padding: "22px 24px", boxShadow: th.shadow }}>
-                <h3 style={{ margin: "0 0 14px", fontSize: 19, fontWeight: 700, color: th.text }}>Activity Log</h3>
-                <div style={{ maxHeight: 340, overflowY: "auto", fontSize: 14, fontFamily: "'JetBrains Mono',monospace" }}>
+              <div
+                style={{
+                  background: th.surface,
+                  border: `1px solid ${th.border}`,
+                  borderRadius: 14,
+                  padding: "22px 24px",
+                  boxShadow: th.shadow,
+                }}
+              >
+                <h3
+                  style={{
+                    margin: "0 0 14px",
+                    fontSize: 19,
+                    fontWeight: 700,
+                    color: th.text,
+                  }}
+                >
+                  Activity Log
+                </h3>
+                <div
+                  style={{
+                    maxHeight: 340,
+                    overflowY: "auto",
+                    fontSize: 14,
+                    fontFamily: "'JetBrains Mono',monospace",
+                  }}
+                >
                   {pumpLog.length === 0 ? (
-                    <div style={{ color: th.textMuted, textAlign: "center", padding: "40px 0" }}>No dosing activity yet</div>
-                  ) : pumpLog.map((entry, i) => (
-                    <div key={i} style={{ padding: "8px 0", borderBottom: `1px solid ${th.borderLight}`, color: th.textSecondary }}>
-                      <span style={{ color: th.textMuted, marginRight: 10 }}>{entry.time}</span>
-                      {entry.msg}
+                    <div
+                      style={{
+                        color: th.textMuted,
+                        textAlign: "center",
+                        padding: "40px 0",
+                      }}
+                    >
+                      No dosing activity yet
                     </div>
-                  ))}
+                  ) : (
+                    pumpLog.map((entry, i) => (
+                      <div
+                        key={i}
+                        style={{
+                          padding: "8px 0",
+                          borderBottom: `1px solid ${th.borderLight}`,
+                          color: th.textSecondary,
+                        }}
+                      >
+                        <span style={{ color: th.textMuted, marginRight: 10 }}>
+                          {entry.time}
+                        </span>
+                        {entry.msg}
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
             </div>
 
             {/* Pump Setup Reference */}
-            <div style={{ marginTop: 20, display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14 }}>
+            <div
+              style={{
+                marginTop: 20,
+                display: "grid",
+                gridTemplateColumns: "repeat(3, 1fr)",
+                gap: 14,
+              }}
+            >
               {[
-                { label: "Media Pump", ch: "PWM 2", desc: "Adds fresh media to the vial" },
-                { label: "Waste Pump", ch: "PWM 4", desc: "Removes spent media from the vial" },
-                { label: "Alt-Media Pump", ch: "PWM 3", desc: "Alternative media for morbidostat experiments" },
+                {
+                  label: "Media Pump",
+                  ch: "PWM 2",
+                  desc: "Adds fresh media to the vial",
+                },
+                {
+                  label: "Waste Pump",
+                  ch: "PWM 4",
+                  desc: "Removes spent media from the vial",
+                },
+                {
+                  label: "Alt-Media Pump",
+                  ch: "PWM 3",
+                  desc: "Alternative media for morbidostat experiments",
+                },
               ].map((p, i) => (
-                <div key={i} style={{ background: th.surface, border: `1px solid ${th.border}`, borderRadius: 12, padding: "16px 18px", boxShadow: th.shadow }}>
-                  <div style={{ fontSize: 16, fontWeight: 700, color: th.text, marginBottom: 4 }}>{p.label}</div>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: th.accent, background: th.accentLight, display: "inline-block", padding: "2px 8px", borderRadius: 6, marginBottom: 8 }}>{p.ch}</div>
-                  <div style={{ fontSize: 14, color: th.textSecondary }}>{p.desc}</div>
+                <div
+                  key={i}
+                  style={{
+                    background: th.surface,
+                    border: `1px solid ${th.border}`,
+                    borderRadius: 12,
+                    padding: "16px 18px",
+                    boxShadow: th.shadow,
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: 16,
+                      fontWeight: 700,
+                      color: th.text,
+                      marginBottom: 4,
+                    }}
+                  >
+                    {p.label}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 13,
+                      fontWeight: 600,
+                      color: th.accent,
+                      background: th.accentLight,
+                      display: "inline-block",
+                      padding: "2px 8px",
+                      borderRadius: 6,
+                      marginBottom: 8,
+                    }}
+                  >
+                    {p.ch}
+                  </div>
+                  <div style={{ fontSize: 14, color: th.textSecondary }}>
+                    {p.desc}
+                  </div>
                 </div>
               ))}
             </div>
 
             {/* Calibration reminder */}
-            <div style={{ marginTop: 16, padding: "14px 18px", background: th.bgAlt, borderRadius: 10, fontSize: 14, color: th.textSecondary, lineHeight: 1.7 }}>
-              <span style={{ fontWeight: 700, color: th.text }}>Calibration required:</span> SSH into the Pioreactor and run{" "}
-              <code style={{ background: th.surface, padding: "2px 8px", borderRadius: 5, fontFamily: "'JetBrains Mono',monospace", fontSize: 13, color: th.accent }}>
+            <div
+              style={{
+                marginTop: 16,
+                padding: "14px 18px",
+                background: th.bgAlt,
+                borderRadius: 10,
+                fontSize: 14,
+                color: th.textSecondary,
+                lineHeight: 1.7,
+              }}
+            >
+              <span style={{ fontWeight: 700, color: th.text }}>
+                Calibration required:
+              </span>{" "}
+              SSH into the Pioreactor and run{" "}
+              <code
+                style={{
+                  background: th.surface,
+                  padding: "2px 8px",
+                  borderRadius: 5,
+                  fontFamily: "'JetBrains Mono',monospace",
+                  fontSize: 13,
+                  color: th.accent,
+                }}
+              >
                 pio calibrations run --device media_pump
               </code>{" "}
-              before using dosing automations. You need a scale accurate to 0.1g.
+              before using dosing automations. You need a scale accurate to
+              0.1g.
             </div>
           </div>
         )}
@@ -3041,8 +3840,7 @@ export default function App() {
                       log.log_level ||
                       "INFO"
                     ).toUpperCase();
-                    const isErr =
-                      level === "ERROR" || level === "CRITICAL";
+                    const isErr = level === "ERROR" || level === "CRITICAL";
                     const isWarn = level === "WARNING" || level === "WARN";
                     const isDebug = level === "DEBUG";
                     const levelColor = isErr
@@ -3069,15 +3867,9 @@ export default function App() {
                           second: "2-digit",
                         })
                       : "";
-                    const source =
-                      log.task ||
-                      log.source ||
-                      log.job_name ||
-                      "";
-                    const unit =
-                      log.pioreactor_unit || log.unit || "";
-                    const msg =
-                      log.message || log.msg || log.log || "";
+                    const source = log.task || log.source || log.job_name || "";
+                    const unit = log.pioreactor_unit || log.unit || "";
+                    const msg = log.message || log.msg || log.log || "";
 
                     return (
                       <div
@@ -3091,12 +3883,11 @@ export default function App() {
                           display: "flex",
                           gap: 12,
                           alignItems: "flex-start",
-                          background:
-                            isErr
-                              ? `${th.danger}06`
-                              : isWarn
-                                ? `${th.warning}06`
-                                : "transparent",
+                          background: isErr
+                            ? `${th.danger}06`
+                            : isWarn
+                              ? `${th.warning}06`
+                              : "transparent",
                         }}
                       >
                         <div
@@ -3115,8 +3906,7 @@ export default function App() {
                               borderRadius: 5,
                               color: levelColor,
                               background: levelBg,
-                              fontFamily:
-                                "'JetBrains Mono',monospace",
+                              fontFamily: "'JetBrains Mono',monospace",
                               minWidth: 52,
                               textAlign: "center",
                             }}
@@ -3148,8 +3938,7 @@ export default function App() {
                                 style={{
                                   fontSize: 13,
                                   color: th.textMuted,
-                                  fontFamily:
-                                    "'JetBrains Mono',monospace",
+                                  fontFamily: "'JetBrains Mono',monospace",
                                 }}
                               >
                                 {time}
@@ -3252,7 +4041,8 @@ export default function App() {
             color: th.textMuted,
           }}
         >
-          &copy; {new Date().getFullYear()} · Oliveira Lab · Bioreactor Dashboard v0.1
+          &copy; {new Date().getFullYear()} · Oliveira Lab · Bioreactor
+          Dashboard v0.1
         </div>
       </div>
       <AddReactorModal
@@ -3263,35 +4053,144 @@ export default function App() {
       />
       {/* New Experiment Modal */}
       {showNewExp && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setShowNewExp(false)}>
-          <div style={{ background: th.surface, borderRadius: 16, padding: "28px 32px", width: 420, maxWidth: "90vw", boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }} onClick={e => e.stopPropagation()}>
-            <h2 style={{ margin: "0 0 18px", fontSize: 22, fontWeight: 700, color: th.text }}>New Experiment</h2>
-            <label style={{ fontSize: 14, fontWeight: 600, color: th.textSecondary, display: "block", marginBottom: 6 }}>Experiment Name</label>
-            <input value={newExpName} onChange={e => setNewExpName(e.target.value)} placeholder="e.g. E. coli glucose limitation run 3" style={{
-              width: "100%", padding: "10px 14px", borderRadius: 8, border: `1px solid ${th.border}`, background: th.bgAlt,
-              color: th.text, fontSize: 16, fontFamily: "inherit", outline: "none", marginBottom: 14,
-            }} />
-            <label style={{ fontSize: 14, fontWeight: 600, color: th.textSecondary, display: "block", marginBottom: 6 }}>Description (optional)</label>
-            <input value={newExpDesc} onChange={e => setNewExpDesc(e.target.value)} placeholder="Brief description of the experiment" style={{
-              width: "100%", padding: "10px 14px", borderRadius: 8, border: `1px solid ${th.border}`, background: th.bgAlt,
-              color: th.text, fontSize: 16, fontFamily: "inherit", outline: "none", marginBottom: 18,
-            }} />
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.4)",
+            zIndex: 1000,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+          onClick={() => setShowNewExp(false)}
+        >
+          <div
+            style={{
+              background: th.surface,
+              borderRadius: 16,
+              padding: "28px 32px",
+              width: 420,
+              maxWidth: "90vw",
+              boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2
+              style={{
+                margin: "0 0 18px",
+                fontSize: 22,
+                fontWeight: 700,
+                color: th.text,
+              }}
+            >
+              New Experiment
+            </h2>
+            <label
+              style={{
+                fontSize: 14,
+                fontWeight: 600,
+                color: th.textSecondary,
+                display: "block",
+                marginBottom: 6,
+              }}
+            >
+              Experiment Name
+            </label>
+            <input
+              value={newExpName}
+              onChange={(e) => setNewExpName(e.target.value)}
+              placeholder=""
+              style={{
+                width: "100%",
+                padding: "10px 14px",
+                borderRadius: 8,
+                border: `1px solid ${th.border}`,
+                background: th.bgAlt,
+                color: th.text,
+                fontSize: 16,
+                fontFamily: "inherit",
+                outline: "none",
+                marginBottom: 14,
+              }}
+            />
+            <label
+              style={{
+                fontSize: 14,
+                fontWeight: 600,
+                color: th.textSecondary,
+                display: "block",
+                marginBottom: 6,
+              }}
+            >
+              Description (optional)
+            </label>
+            <input
+              value={newExpDesc}
+              onChange={(e) => setNewExpDesc(e.target.value)}
+              placeholder="Brief description of the experiment"
+              style={{
+                width: "100%",
+                padding: "10px 14px",
+                borderRadius: 8,
+                border: `1px solid ${th.border}`,
+                background: th.bgAlt,
+                color: th.text,
+                fontSize: 16,
+                fontFamily: "inherit",
+                outline: "none",
+                marginBottom: 18,
+              }}
+            />
             <div style={{ display: "flex", gap: 10 }}>
-              <button onClick={async () => {
-                if (!newExpName.trim()) return;
-                setCreatingExp(true);
-                const res = await createExperiment(newExpName.trim(), newExpDesc.trim());
-                setCreatingExp(false);
-                if (res.success) { setShowNewExp(false); setNewExpName(""); setNewExpDesc(""); }
-              }} disabled={creatingExp || !newExpName.trim()} style={{
-                flex: 1, padding: "12px", borderRadius: 10, border: "none", background: th.accent,
-                color: "#fff", fontWeight: 700, fontSize: 16, cursor: "pointer", fontFamily: "inherit",
-                opacity: creatingExp ? 0.6 : 1,
-              }}>{creatingExp ? "Creating..." : "Create Experiment"}</button>
-              <button onClick={() => setShowNewExp(false)} style={{
-                padding: "12px 20px", borderRadius: 10, border: `1px solid ${th.border}`,
-                background: "transparent", color: th.textSecondary, fontWeight: 600, fontSize: 16, cursor: "pointer", fontFamily: "inherit",
-              }}>Cancel</button>
+              <button
+                onClick={async () => {
+                  if (!newExpName.trim()) return;
+                  setCreatingExp(true);
+                  const res = await createExperiment(
+                    newExpName.trim(),
+                    newExpDesc.trim(),
+                  );
+                  setCreatingExp(false);
+                  if (res.success) {
+                    setShowNewExp(false);
+                    setNewExpName("");
+                    setNewExpDesc("");
+                  }
+                }}
+                disabled={creatingExp || !newExpName.trim()}
+                style={{
+                  flex: 1,
+                  padding: "12px",
+                  borderRadius: 10,
+                  border: "none",
+                  background: th.accent,
+                  color: "#fff",
+                  fontWeight: 700,
+                  fontSize: 16,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  opacity: creatingExp ? 0.6 : 1,
+                }}
+              >
+                {creatingExp ? "Creating..." : "Create Experiment"}
+              </button>
+              <button
+                onClick={() => setShowNewExp(false)}
+                style={{
+                  padding: "12px 20px",
+                  borderRadius: 10,
+                  border: `1px solid ${th.border}`,
+                  background: "transparent",
+                  color: th.textSecondary,
+                  fontWeight: 600,
+                  fontSize: 16,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                Cancel
+              </button>
             </div>
           </div>
         </div>
