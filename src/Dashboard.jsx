@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
   AreaChart,
   Area,
@@ -40,6 +40,8 @@ const buildApiUrl = (path) => {
 };
 
 const REFRESH_INTERVAL = 10000; // 10 seconds
+/** In Live mode, a unit is "streaming" only if OD/temp/GR has a point newer than this. */
+const SERIES_STALE_MS = 120_000;
 
 /* ═══════════════════════════════════════════════════
    API HELPERS
@@ -133,10 +135,61 @@ const transformWorkers = (raw) => {
         .replace(/worker/i, "Worker ")
         .trim() || `Unit ${i + 1}`,
     role: i === 0 ? "Leader + Worker" : "Worker",
+    // is_active = enabled in cluster config, not the same as physically reporting data
     status: w.is_active ? "online" : "offline",
     model: `${w.model_name?.replace("pioreactor_", "") || "unknown"} v${w.model_version || "?"}`,
     addedAt: w.added_at,
   }));
+};
+
+/** Latest finite sample per worker; isLive uses wall-clock freshness only when chartLiveMode. */
+const buildPerReactorTelemetry = (
+  odData,
+  tempData,
+  growthData,
+  workers,
+  chartLiveMode,
+) => {
+  const out = {};
+  if (!workers?.length) return out;
+  workers.forEach((w, i) => {
+    const key = `r${String(i + 1).padStart(2, "0")}`;
+    const lastFinite = (ds) => {
+      if (!ds?.data?.length) return { ts: 0, v: null };
+      for (let idx = ds.data.length - 1; idx >= 0; idx--) {
+        const row = ds.data[idx];
+        const raw = row[key];
+        if (raw != null && Number.isFinite(Number(raw))) {
+          return { ts: Number(row._ts) || 0, v: Number(raw) };
+        }
+      }
+      return { ts: 0, v: null };
+    };
+    const od = lastFinite(odData);
+    const temp = lastFinite(tempData);
+    const growth = lastFinite(growthData);
+    const lastMs = Math.max(od.ts, temp.ts, growth.ts);
+    const hasAnyPoint = lastMs > 0;
+    const isLive =
+      chartLiveMode && hasAnyPoint
+        ? Date.now() - lastMs <= SERIES_STALE_MS
+        : hasAnyPoint;
+    out[w.id] = {
+      od: od.v,
+      temp: temp.v,
+      growth: growth.v,
+      lastMs,
+      isLive,
+    };
+  });
+  return out;
+};
+
+const overviewCardDotStatus = (r, tel, chartLiveMode) => {
+  if (r.status === "offline") return "offline";
+  if (r.status === "warning") return "warning";
+  if (chartLiveMode && (!tel || !tel.isLive)) return "warning";
+  return "online";
 };
 
 /* ═══════════════════════════════════════════════════
@@ -1488,6 +1541,7 @@ const AnimatedVial = ({
   growthRate = 0,
   pumpActive = false,
   reactorName = "",
+  dataStale = false,
 }) => {
   const [cells, setCells] = useState([]);
   const [tick, setTick] = useState(0);
@@ -1557,9 +1611,14 @@ const AnimatedVial = ({
   const liquidColor = `hsl(${200 - tempNorm * 60}, ${50 + tempNorm * 20}%, ${85 - tempNorm * 15}%)`;
   const liquidColorDark = `hsl(${200 - tempNorm * 60}, ${40 + tempNorm * 15}%, ${35 - tempNorm * 5}%)`;
 
-  // Growth indicator
-  const growthColor =
-    growthRate > 0.02 ? "#22c55e" : growthRate > 0 ? "#eab308" : "#94a3b8";
+  // Growth indicator (gray when not streaming live)
+  const growthColor = dataStale
+    ? th.textMuted
+    : growthRate > 0.02
+      ? "#22c55e"
+      : growthRate > 0
+        ? "#eab308"
+        : "#94a3b8";
 
   return (
     <div
@@ -1579,8 +1638,22 @@ const AnimatedVial = ({
           marginBottom: 8,
         }}
       >
-        <div style={{ fontSize: 16, fontWeight: 700, color: th.text }}>
-          {reactorName || "Bioreactor Vial"}
+        <div>
+          <div style={{ fontSize: 16, fontWeight: 700, color: th.text }}>
+            {reactorName || "Bioreactor Vial"}
+          </div>
+          {dataStale && (
+            <div
+              style={{
+                fontSize: 11,
+                fontWeight: 600,
+                color: th.warning,
+                marginTop: 4,
+              }}
+            >
+              No recent telemetry
+            </div>
+          )}
         </div>
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
           <div
@@ -1598,7 +1671,10 @@ const AnimatedVial = ({
               fontFamily: "'JetBrains Mono',monospace",
             }}
           >
-            GR: {growthRate?.toFixed(4) || "---"}
+            GR:{" "}
+            {dataStale || growthRate == null || !Number.isFinite(growthRate)
+              ? "---"
+              : growthRate.toFixed(4)}
           </span>
         </div>
       </div>
@@ -1979,6 +2055,25 @@ export default function App() {
   const [creatingExp, setCreatingExp] = useState(false);
 
   const online = reactors.filter((r) => r.status === "online").length;
+  const chartLiveMode = !timeRange.start && !timeRange.end;
+  const telemetryByReactor = useMemo(
+    () =>
+      buildPerReactorTelemetry(
+        odData,
+        tempData,
+        growthData,
+        reactors,
+        chartLiveMode,
+      ),
+    [odData, tempData, growthData, reactors, chartLiveMode],
+  );
+  const streamingCount = useMemo(
+    () =>
+      reactors.filter(
+        (r) => r.status !== "offline" && telemetryByReactor[r.id]?.isLive,
+      ).length,
+    [reactors, telemetryByReactor],
+  );
   const [starting, setStarting] = useState({});
 
   // Pump control state
@@ -2428,7 +2523,9 @@ export default function App() {
               }}
             >
               {connected
-                ? `${online} of ${reactors.length} Online`
+                ? chartLiveMode
+                  ? `${streamingCount} of ${reactors.length} live`
+                  : `${online} of ${reactors.length} enabled`
                 : "Offline - Not Connected"}
             </span>
           </div>
@@ -2890,7 +2987,14 @@ export default function App() {
                           marginBottom: 4,
                         }}
                       >
-                        <Dot s={r.status} th={th} />
+                        <Dot
+                          s={overviewCardDotStatus(
+                            r,
+                            telemetryByReactor[r.id],
+                            chartLiveMode,
+                          )}
+                          th={th}
+                        />
                         <span
                           style={{
                             fontSize: 17,
@@ -2953,6 +3057,25 @@ export default function App() {
                       outline: "none",
                     }}
                   />
+                  {chartLiveMode &&
+                    r.status === "online" &&
+                    telemetryByReactor[r.id] &&
+                    !telemetryByReactor[r.id].isLive && (
+                      <div
+                        style={{
+                          marginTop: 10,
+                          padding: "8px 10px",
+                          borderRadius: 8,
+                          background: th.warningBg,
+                          border: `1px solid ${th.warning}20`,
+                          fontSize: 14,
+                          color: th.warning,
+                          fontWeight: 500,
+                        }}
+                      >
+                        No data in the last few minutes — unit may be offline
+                      </div>
+                    )}
                   {r.status === "warning" && (
                     <div
                       style={{
@@ -2973,7 +3096,7 @@ export default function App() {
               ))}
             </div>
 
-            {/* Animated Bioreactor Vials */}
+            {/* Bioreactor vials: one per enabled unit, values from latest time-series points */}
             <div
               style={{
                 display: "grid",
@@ -2982,34 +3105,35 @@ export default function App() {
                 marginBottom: 28,
               }}
             >
-              {/* HARDCODED DEMO VIALS - remove these when real data is connected */}
-              <AnimatedVial
-                th={th}
-                reactorName="Pioreactor 01"
-                odValue={0.85}
-                tempValue={37}
-                stirringRpm={450}
-                growthRate={0.032}
-                pumpActive={true}
-              />
-              <AnimatedVial
-                th={th}
-                reactorName="Pioreactor 02"
-                odValue={0.35}
-                tempValue={30}
-                stirringRpm={200}
-                growthRate={0.008}
-                pumpActive={false}
-              />
-              <AnimatedVial
-                th={th}
-                reactorName="Pioreactor 03"
-                odValue={1.6}
-                tempValue={42}
-                stirringRpm={600}
-                growthRate={0.001}
-                pumpActive={true}
-              />
+              {reactors
+                .filter((r) => r.status !== "offline")
+                .map((r) => {
+                  const tel = telemetryByReactor[r.id];
+                  const stale = chartLiveMode && (!tel || !tel.isLive);
+                  return (
+                    <AnimatedVial
+                      key={r.id}
+                      th={th}
+                      reactorName={r.label}
+                      odValue={
+                        tel?.od != null && Number.isFinite(tel.od) ? tel.od : null
+                      }
+                      tempValue={
+                        tel?.temp != null && Number.isFinite(tel.temp)
+                          ? tel.temp
+                          : null
+                      }
+                      stirringRpm={0}
+                      growthRate={
+                        tel?.growth != null && Number.isFinite(tel.growth)
+                          ? tel.growth
+                          : undefined
+                      }
+                      pumpActive={false}
+                      dataStale={stale}
+                    />
+                  );
+                })}
             </div>
 
             <Chart th={th} {...odP} />
@@ -3031,9 +3155,12 @@ export default function App() {
             >
               <div>
                 <p style={{ margin: 0, fontSize: 17, color: th.textSecondary }}>
-                  {reactors.length} bioreactors · {online} online ·{" "}
-                  {reactors.filter((r) => r.status === "offline").length}{" "}
-                  offline
+                  {reactors.length} bioreactors ·{" "}
+                  {chartLiveMode
+                    ? `${streamingCount} live · `
+                    : ""}
+                  {online} enabled ·{" "}
+                  {reactors.filter((r) => r.status === "offline").length} excluded
                 </p>
               </div>
               <button
@@ -3075,7 +3202,14 @@ export default function App() {
                   }}
                 >
                   <div style={{ flex: "0 0 auto" }}>
-                    <Dot s={r.status} th={th} />
+                    <Dot
+                      s={overviewCardDotStatus(
+                        r,
+                        telemetryByReactor[r.id],
+                        chartLiveMode,
+                      )}
+                      th={th}
+                    />
                   </div>
                   <div style={{ flex: 1, minWidth: 160 }}>
                     <div
