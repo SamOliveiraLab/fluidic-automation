@@ -879,6 +879,7 @@ const Chart = ({
   stopLabel,
   onStartAction,
   startLabel,
+  isRunning,
   headerExtra,
 }) => {
   const [filter, setFilter] = useState("both");
@@ -1009,41 +1010,35 @@ const Chart = ({
             >
               ↓ PNG
             </button>
-            {has && onStartAction && (
-              <button
-                onClick={onStartAction}
-                style={{
-                  padding: "5px 12px",
-                  borderRadius: 6,
-                  fontSize: 14,
-                  fontWeight: 700,
-                  fontFamily: "inherit",
-                  background: `${th.success}15`,
-                  border: `1px solid ${th.success}40`,
-                  color: th.success,
-                  cursor: "pointer",
-                }}
-              >
-                {startLabel || "Start"}
-              </button>
-            )}
-            {has && onStopAction && (
-              <button
-                onClick={onStopAction}
-                style={{
-                  padding: "5px 12px",
-                  borderRadius: 6,
-                  fontSize: 14,
-                  fontWeight: 700,
-                  fontFamily: "inherit",
-                  background: th.dangerBg,
-                  border: `1px solid ${th.danger}40`,
-                  color: th.danger,
-                  cursor: "pointer",
-                }}
-              >
-                {stopLabel || "Stop"}
-              </button>
+            {has && onStartAction && onStopAction && (
+              <>
+                <span style={{
+                  fontSize: 12, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace",
+                  color: isRunning ? th.success : th.textMuted,
+                  background: isRunning ? `${th.success}15` : th.bgAlt,
+                  padding: "4px 10px", borderRadius: 20,
+                }}>
+                  {isRunning ? "● RUNNING" : "○ STOPPED"}
+                </span>
+                <button
+                  onClick={isRunning ? onStopAction : onStartAction}
+                  style={{
+                    padding: "5px 12px",
+                    borderRadius: 6,
+                    fontSize: 14,
+                    fontWeight: 700,
+                    fontFamily: "inherit",
+                    background: isRunning ? th.dangerBg : `${th.success}15`,
+                    border: `1px solid ${isRunning ? th.danger : th.success}40`,
+                    color: isRunning ? th.danger : th.success,
+                    cursor: "pointer",
+                  }}
+                >
+                  {isRunning
+                    ? (stopLabel || "■ Stop")
+                    : (startLabel || "▶ Start")}
+                </button>
+              </>
             )}
             {headerExtra}
           </div>
@@ -2265,15 +2260,19 @@ export default function App() {
   const handleStartJob = async (jobName, options = {}) => {
     setStarting((prev) => ({ ...prev, [jobName]: true }));
     const result = await startJob(jobName, options);
+    setRunningJobs((prev) => ({ ...prev, [jobName]: true }));
     setStarting((prev) => ({ ...prev, [jobName]: false }));
     return result;
   };
 
   const [stopping, setStopping] = useState({});
   const [targetTemp, setTargetTemp] = useState("30");
+  const [runningJobs, setRunningJobs] = useState({});
+
   const handleStopJob = async (jobName) => {
     setStopping((prev) => ({ ...prev, [jobName]: true }));
     await stopJob(jobName);
+    setRunningJobs((prev) => ({ ...prev, [jobName]: false }));
     setStopping((prev) => ({ ...prev, [jobName]: false }));
   };
 
@@ -2341,6 +2340,7 @@ export default function App() {
     stopLabel: stopping.od_reading ? "Stopping..." : "■ Stop OD",
     onStartAction: connected ? () => handleStartJob("od_reading") : undefined,
     startLabel: starting.od_reading ? "Starting..." : "▶ Start OD",
+    isRunning: !!runningJobs.od_reading,
   };
   const tempP = {
     title: "Temperature (°C)",
@@ -2382,6 +2382,7 @@ export default function App() {
     stopLabel: stopping.temperature_automation ? "Stopping..." : "■ Stop Temp",
     onStartAction: connected ? () => handleStartJob("temperature_automation", { automation_name: "thermostat", target_temperature: parseFloat(targetTemp) }) : undefined,
     startLabel: starting.temperature_automation ? "Starting..." : `▶ Start ${targetTemp}°C`,
+    isRunning: !!runningJobs.temperature_automation,
     headerExtra: (
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <label style={{ fontSize: 13, fontWeight: 600, color: th.textMuted }}>Target</label>
@@ -2463,6 +2464,7 @@ export default function App() {
     stopLabel: stopping.growth_rate_calculating ? "Stopping..." : "■ Stop GR",
     onStartAction: connected ? () => handleStartJob("growth_rate_calculating") : undefined,
     startLabel: starting.growth_rate_calculating ? "Starting..." : "▶ Start GR",
+    isRunning: !!runningJobs.growth_rate_calculating,
   };
 
   const CS = ({ icon, title, desc }) => (
