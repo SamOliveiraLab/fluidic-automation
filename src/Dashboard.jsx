@@ -69,7 +69,8 @@ const api = async (path) => {
 // API returns: { series: ["unit1-ch","unit2-ch"], data: [[{x,y},...],[{x,y},...]] }
 // We need:    [{ t:"HH:MM", r01: value, r02: value }, ...]
 const transformTimeSeries = (raw, workers) => {
-  if (!raw?.series?.length || !raw?.data?.length) return { data: [], keys: [] };
+  if (!raw?.series?.length || !raw?.data?.length)
+    return { data: [], keys: [], latestByKey: {} };
 
   const keyMap = {};
   const keys = [];
@@ -115,12 +116,29 @@ const transformTimeSeries = (raw, workers) => {
   });
 
   let data = Object.values(timeMap).sort((a, b) => a._ts - b._ts);
+  // Latest sample per series *before* downsampling — decimation drops tail rows and
+  // would otherwise make "live" detection think data is minutes old.
+  const latestByKey = {};
+  for (const row of data) {
+    const ts = Number(row._ts);
+    if (!Number.isFinite(ts)) continue;
+    for (const k of Object.keys(row)) {
+      if (k === "t" || k === "_ts") continue;
+      const v = row[k];
+      if (v != null && Number.isFinite(Number(v))) {
+        const prev = latestByKey[k];
+        if (!prev || ts >= prev.ts) {
+          latestByKey[k] = { ts, v: Number(v) };
+        }
+      }
+    }
+  }
   if (data.length > 300) {
     const step = Math.ceil(data.length / 300);
     data = data.filter((_, i) => i % step === 0);
   }
 
-  return { data, keys };
+  return { data, keys, latestByKey };
 };
 
 // Transform /api/workers response → reactor card format
@@ -154,21 +172,45 @@ const buildPerReactorTelemetry = (
   if (!workers?.length) return out;
   workers.forEach((w, i) => {
     const key = `r${String(i + 1).padStart(2, "0")}`;
-    const lastFinite = (ds) => {
+    const fromLatest = (ds) => {
+      const hit = ds?.latestByKey?.[key];
+      if (
+        hit &&
+        Number.isFinite(hit.ts) &&
+        hit.ts > 0 &&
+        hit.v != null &&
+        Number.isFinite(Number(hit.v))
+      ) {
+        return { ts: hit.ts, v: Number(hit.v) };
+      }
+      return { ts: 0, v: null };
+    };
+    const lastFiniteFallback = (ds) => {
       if (!ds?.data?.length) return { ts: 0, v: null };
       for (let idx = ds.data.length - 1; idx >= 0; idx--) {
         const row = ds.data[idx];
         const raw = row[key];
         if (raw != null && Number.isFinite(Number(raw))) {
-          return { ts: Number(row._ts) || 0, v: Number(raw) };
+          const ts = Number(row._ts);
+          return {
+            ts: Number.isFinite(ts) && ts > 0 ? ts : 0,
+            v: Number(raw),
+          };
         }
       }
       return { ts: 0, v: null };
     };
-    const od = lastFinite(odData);
-    const temp = lastFinite(tempData);
-    const growth = lastFinite(growthData);
-    const lastMs = Math.max(od.ts, temp.ts, growth.ts);
+    const pick = (ds) => {
+      const a = fromLatest(ds);
+      return a.ts > 0 ? a : lastFiniteFallback(ds);
+    };
+    const od = pick(odData);
+    const temp = pick(tempData);
+    const growth = pick(growthData);
+    const times = [od.ts, temp.ts, growth.ts].filter(
+      (t) => Number.isFinite(t) && t > 0,
+    );
+    const lastMs = times.length ? Math.max(...times) : 0;
     const hasAnyPoint = lastMs > 0;
     const isLive =
       chartLiveMode && hasAnyPoint
@@ -207,9 +249,21 @@ const usePioreactorData = () => {
     selectedExpRef.current = selectedExpName;
   }, [selectedExpName]);
   const [reactors, setReactors] = useState([]);
-  const [odData, setOdData] = useState({ data: [], keys: [] });
-  const [tempData, setTempData] = useState({ data: [], keys: [] });
-  const [growthData, setGrowthData] = useState({ data: [], keys: [] });
+  const [odData, setOdData] = useState({
+    data: [],
+    keys: [],
+    latestByKey: {},
+  });
+  const [tempData, setTempData] = useState({
+    data: [],
+    keys: [],
+    latestByKey: {},
+  });
+  const [growthData, setGrowthData] = useState({
+    data: [],
+    keys: [],
+    latestByKey: {},
+  });
   const [logs, setLogs] = useState([]);
   const [lastFetch, setLastFetch] = useState(null);
   const [timeRange, setTimeRange] = useState({ start: "", end: "" });
