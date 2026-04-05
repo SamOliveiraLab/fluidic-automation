@@ -141,6 +141,8 @@ const usePioreactorData = () => {
   const [logs, setLogs] = useState([]);
   const [lastFetch, setLastFetch] = useState(null);
   const [timeRange, setTimeRange] = useState({ start: "", end: "" });
+  const timeRangeRef = useRef(timeRange);
+  useEffect(() => { timeRangeRef.current = timeRange; }, [timeRange]);
 
   // Persist overrides to localStorage so they survive page refresh
   const loadOverrides = () => {
@@ -183,7 +185,7 @@ const usePioreactorData = () => {
     const expName = encodeURIComponent(latestExp.experiment);
 
     // 3. Fetch all time series in parallel (with optional date range)
-    const tr = timeRange;
+    const tr = timeRangeRef.current;
     const rangeQ =
       (tr.start ? `&start=${encodeURIComponent(tr.start)}` : "") +
       (tr.end ? `&end=${encodeURIComponent(tr.end)}` : "");
@@ -656,6 +658,8 @@ const Chart = ({
   emptySub,
   emptyAction,
   onEmptyAction,
+  onStopAction,
+  stopLabel,
 }) => {
   const [filter, setFilter] = useState("both");
   const [showI, setShowI] = useState(false);
@@ -785,6 +789,24 @@ const Chart = ({
             >
               ↓ PNG
             </button>
+            {has && onStopAction && (
+              <button
+                onClick={onStopAction}
+                style={{
+                  padding: "5px 12px",
+                  borderRadius: 6,
+                  fontSize: 14,
+                  fontWeight: 700,
+                  fontFamily: "inherit",
+                  background: th.dangerBg,
+                  border: `1px solid ${th.danger}40`,
+                  color: th.danger,
+                  cursor: "pointer",
+                }}
+              >
+                {stopLabel || "Stop"}
+              </button>
+            )}
           </div>
         </div>
         {has ? (
@@ -1660,6 +1682,13 @@ export default function App() {
     return result;
   };
 
+  const [stopping, setStopping] = useState({});
+  const handleStopJob = async (jobName) => {
+    setStopping(prev => ({ ...prev, [jobName]: true }));
+    await stopJob(jobName);
+    setStopping(prev => ({ ...prev, [jobName]: false }));
+  };
+
   const nav = [
     { id: "overview", icon: "◉", label: "Overview" },
     { id: "reactors", icon: "⬢", label: "Bioreactors" },
@@ -1713,6 +1742,8 @@ export default function App() {
       : "Cannot reach Pioreactor API. Are you on the lab network?",
     emptyAction: connected ? (starting.od_reading ? "Starting..." : "Start OD Reading →") : "Check Connection",
     onEmptyAction: connected ? () => handleStartJob("od_reading") : undefined,
+    onStopAction: connected && odData.data.length > 0 ? () => handleStopJob("od_reading") : undefined,
+    stopLabel: stopping.od_reading ? "Stopping..." : "■ Stop OD",
   };
   const tempP = {
     title: "Temperature (°C)",
@@ -1739,6 +1770,8 @@ export default function App() {
       ? (starting.temperature_automation ? "Starting..." : "Start Temperature Automation →")
       : "Check Connection",
     onEmptyAction: connected ? () => handleStartJob("temperature_automation", { automation_name: "thermostat", target_temperature: 30 }) : undefined,
+    onStopAction: connected && tempData.data.length > 0 ? () => handleStopJob("temperature_automation") : undefined,
+    stopLabel: stopping.temperature_automation ? "Stopping..." : "■ Stop Temp",
   };
   const grP = {
     title: "Growth Rate",
@@ -1766,6 +1799,8 @@ export default function App() {
       : "Cannot reach Pioreactor API.",
     emptyAction: connected ? (starting.growth_rate_calculating ? "Starting..." : "Start Growth Rate →") : "Check Connection",
     onEmptyAction: connected ? () => handleStartJob("growth_rate_calculating") : undefined,
+    onStopAction: connected && growthData.data.length > 0 ? () => handleStopJob("growth_rate_calculating") : undefined,
+    stopLabel: stopping.growth_rate_calculating ? "Stopping..." : "■ Stop GR",
   };
 
   const CS = ({ icon, title, desc }) => (
