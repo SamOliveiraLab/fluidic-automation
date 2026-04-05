@@ -747,6 +747,7 @@ const Chart = ({
   onEmptyAction,
   onStopAction,
   stopLabel,
+  headerExtra,
 }) => {
   const [filter, setFilter] = useState("both");
   const [showI, setShowI] = useState(false);
@@ -894,6 +895,7 @@ const Chart = ({
                 {stopLabel || "Stop"}
               </button>
             )}
+            {headerExtra}
           </div>
         </div>
         {has ? (
@@ -2072,6 +2074,7 @@ export default function App() {
   };
 
   const [stopping, setStopping] = useState({});
+  const [targetTemp, setTargetTemp] = useState("30");
   const handleStopJob = async (jobName) => {
     setStopping((prev) => ({ ...prev, [jobName]: true }));
     await stopJob(jobName);
@@ -2165,13 +2168,13 @@ export default function App() {
     emptyAction: connected
       ? starting.temperature_automation
         ? "Starting..."
-        : "Start Temperature Automation →"
+        : `Start Thermostat at ${targetTemp}°C →`
       : "Check Connection",
     onEmptyAction: connected
       ? () =>
           handleStartJob("temperature_automation", {
             automation_name: "thermostat",
-            target_temperature: 30,
+            target_temperature: parseFloat(targetTemp),
           })
       : undefined,
     onStopAction:
@@ -2179,6 +2182,47 @@ export default function App() {
         ? () => handleStopJob("temperature_automation")
         : undefined,
     stopLabel: stopping.temperature_automation ? "Stopping..." : "■ Stop Temp",
+    headerExtra: (
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <label style={{ fontSize: 13, fontWeight: 600, color: th.textMuted }}>Target</label>
+        <input
+          type="number"
+          value={targetTemp}
+          onChange={e => setTargetTemp(e.target.value)}
+          step="0.5"
+          min="20"
+          max="50"
+          style={{
+            width: 60, padding: "5px 8px", borderRadius: 6,
+            border: `1px solid ${th.border}`, background: th.bgAlt,
+            color: th.text, fontSize: 14, fontFamily: "'JetBrains Mono',monospace",
+            textAlign: "center", outline: "none",
+          }}
+        />
+        <span style={{ fontSize: 13, color: th.textMuted }}>°C</span>
+        {connected && tempData.data.length > 0 && (
+          <button
+            onClick={() => {
+              const expEnc = encodeURIComponent(experiment.experiment);
+              reactors.filter(r => r.status === "online").forEach(r => {
+                pioFetch(buildApiUrl(`/api/workers/${encodeURIComponent(r.id)}/jobs/update/job_name/temperature_automation/experiments/${expEnc}`), {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ settings: { target_temperature: parseFloat(targetTemp) } }),
+                });
+              });
+            }}
+            style={{
+              padding: "5px 10px", borderRadius: 6, border: `1px solid ${th.accent}40`,
+              background: th.accentLight, color: th.accent, fontSize: 13,
+              fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+            }}
+          >
+            Set
+          </button>
+        )}
+      </div>
+    ),
   };
   const grP = {
     title: "Growth Rate",
