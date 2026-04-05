@@ -134,6 +134,10 @@ const usePioreactorData = () => {
   const [connected, setConnected] = useState(false);
   const [loading, setLoading] = useState(true);
   const [experiment, setExperiment] = useState(null);
+  const [allExperiments, setAllExperiments] = useState([]);
+  const [selectedExpName, setSelectedExpName] = useState(null); // null = use latest
+  const selectedExpRef = useRef(selectedExpName);
+  useEffect(() => { selectedExpRef.current = selectedExpName; }, [selectedExpName]);
   const [reactors, setReactors] = useState([]);
   const [odData, setOdData] = useState({ data: [], keys: [] });
   const [tempData, setTempData] = useState({ data: [], keys: [] });
@@ -174,15 +178,19 @@ const usePioreactorData = () => {
     );
     setReactors(merged);
 
-    // 2. Fetch latest experiment
+    // 2. Fetch experiments and select
     const expsRaw = await api("/api/experiments");
     if (!expsRaw?.length) {
       setLoading(false);
       return;
     }
-    const latestExp = expsRaw[expsRaw.length - 1];
-    setExperiment(latestExp);
-    const expName = encodeURIComponent(latestExp.experiment);
+    setAllExperiments(expsRaw);
+    const selName = selectedExpRef.current;
+    const activeExp = selName
+      ? expsRaw.find(e => e.experiment === selName) || expsRaw[expsRaw.length - 1]
+      : expsRaw[expsRaw.length - 1];
+    setExperiment(activeExp);
+    const expName = encodeURIComponent(activeExp.experiment);
 
     // 3. Fetch all time series in parallel (with optional date range)
     const tr = timeRangeRef.current;
@@ -320,10 +328,36 @@ const usePioreactorData = () => {
     setTimeout(fetchAll, 2000);
   };
 
+  const selectExperiment = (expName) => {
+    setSelectedExpName(expName);
+    selectedExpRef.current = expName;
+    setTimeout(fetchAll, 100);
+  };
+
+  const createExperiment = async (name, description = "") => {
+    try {
+      const res = await pioFetch(buildApiUrl("/api/experiments"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ experiment: name, description }),
+      });
+      if (res?.ok) {
+        setSelectedExpName(name);
+        selectedExpRef.current = name;
+        setTimeout(fetchAll, 500);
+        return { success: true };
+      }
+      return { success: false, error: "API returned error" };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  };
+
   return {
     connected,
     loading,
     experiment,
+    allExperiments,
     reactors,
     lastFetch,
     odData,
@@ -337,6 +371,8 @@ const usePioreactorData = () => {
     toggleStatus,
     startJob,
     stopJob,
+    selectExperiment,
+    createExperiment,
     refresh: fetchAll,
   };
 };
@@ -1597,6 +1633,7 @@ export default function App() {
     connected,
     loading,
     experiment,
+    allExperiments,
     reactors,
     lastFetch,
     odData,
@@ -1607,11 +1644,40 @@ export default function App() {
     toggleStatus,
     startJob,
     stopJob,
+    selectExperiment,
+    createExperiment,
     logs,
     timeRange,
     setTimeRange,
     refresh,
   } = usePioreactorData();
+
+  // Culture labels: stored per experiment in localStorage
+  const getCultureLabels = () => {
+    try {
+      const saved = localStorage.getItem("culture_labels");
+      return saved ? JSON.parse(saved) : {};
+    } catch { return {}; }
+  };
+  const [cultureLabels, setCultureLabels] = useState(getCultureLabels);
+  const saveCultureLabel = (reactorId, label) => {
+    const expKey = experiment?.experiment || "_default";
+    setCultureLabels(prev => {
+      const next = { ...prev, [expKey]: { ...(prev[expKey] || {}), [reactorId]: label } };
+      try { localStorage.setItem("culture_labels", JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
+  const getCultureLabel = (reactorId) => {
+    const expKey = experiment?.experiment || "_default";
+    return cultureLabels[expKey]?.[reactorId] || "";
+  };
+
+  // Experiment creation dialog
+  const [showNewExp, setShowNewExp] = useState(false);
+  const [newExpName, setNewExpName] = useState("");
+  const [newExpDesc, setNewExpDesc] = useState("");
+  const [creatingExp, setCreatingExp] = useState(false);
 
   const online = reactors.filter((r) => r.status === "online").length;
   const [starting, setStarting] = useState({});
@@ -2283,6 +2349,26 @@ export default function App() {
 
         {page === "overview" && (
           <div style={{ padding: "24px" }}>
+            {/* Experiment Selector Bar */}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, padding: "12px 16px", background: th.surface, border: `1px solid ${th.border}`, borderRadius: 12, boxShadow: th.shadow, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 14, fontWeight: 600, color: th.textMuted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Experiment</span>
+              <select
+                value={experiment?.experiment || ""}
+                onChange={e => selectExperiment(e.target.value)}
+                style={{ padding: "6px 12px", borderRadius: 8, border: `1px solid ${th.border}`, background: th.bgAlt, color: th.text, fontSize: 15, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", minWidth: 200, outline: "none" }}
+              >
+                {allExperiments.map(exp => (
+                  <option key={exp.experiment} value={exp.experiment}>{exp.experiment}</option>
+                ))}
+              </select>
+              <button onClick={() => setShowNewExp(true)} style={{ padding: "6px 16px", borderRadius: 8, border: `1.5px solid ${th.accent}`, background: th.accentLight, color: th.accent, fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                + New Experiment
+              </button>
+              {experiment?.description && (
+                <span style={{ fontSize: 13, color: th.textMuted, marginLeft: 4 }}>{experiment.description}</span>
+              )}
+            </div>
+
             <TimeRangeBar th={th} timeRange={timeRange} setTimeRange={setTimeRange} refresh={refresh} />
             <div
               style={{
@@ -2396,6 +2482,16 @@ export default function App() {
                   >
                     {r.id}
                   </div>
+                  <input
+                    value={getCultureLabel(r.id)}
+                    onChange={e => saveCultureLabel(r.id, e.target.value)}
+                    placeholder="Culture name..."
+                    style={{
+                      marginTop: 6, width: "100%", padding: "5px 8px", borderRadius: 6,
+                      border: `1px solid ${th.borderLight}`, background: th.bgAlt, color: th.text,
+                      fontSize: 13, fontFamily: "inherit", outline: "none",
+                    }}
+                  />
                   {r.status === "warning" && (
                     <div
                       style={{
@@ -3165,6 +3261,41 @@ export default function App() {
         onAdd={addReactor}
         th={th}
       />
+      {/* New Experiment Modal */}
+      {showNewExp && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setShowNewExp(false)}>
+          <div style={{ background: th.surface, borderRadius: 16, padding: "28px 32px", width: 420, maxWidth: "90vw", boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }} onClick={e => e.stopPropagation()}>
+            <h2 style={{ margin: "0 0 18px", fontSize: 22, fontWeight: 700, color: th.text }}>New Experiment</h2>
+            <label style={{ fontSize: 14, fontWeight: 600, color: th.textSecondary, display: "block", marginBottom: 6 }}>Experiment Name</label>
+            <input value={newExpName} onChange={e => setNewExpName(e.target.value)} placeholder="e.g. E. coli glucose limitation run 3" style={{
+              width: "100%", padding: "10px 14px", borderRadius: 8, border: `1px solid ${th.border}`, background: th.bgAlt,
+              color: th.text, fontSize: 16, fontFamily: "inherit", outline: "none", marginBottom: 14,
+            }} />
+            <label style={{ fontSize: 14, fontWeight: 600, color: th.textSecondary, display: "block", marginBottom: 6 }}>Description (optional)</label>
+            <input value={newExpDesc} onChange={e => setNewExpDesc(e.target.value)} placeholder="Brief description of the experiment" style={{
+              width: "100%", padding: "10px 14px", borderRadius: 8, border: `1px solid ${th.border}`, background: th.bgAlt,
+              color: th.text, fontSize: 16, fontFamily: "inherit", outline: "none", marginBottom: 18,
+            }} />
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={async () => {
+                if (!newExpName.trim()) return;
+                setCreatingExp(true);
+                const res = await createExperiment(newExpName.trim(), newExpDesc.trim());
+                setCreatingExp(false);
+                if (res.success) { setShowNewExp(false); setNewExpName(""); setNewExpDesc(""); }
+              }} disabled={creatingExp || !newExpName.trim()} style={{
+                flex: 1, padding: "12px", borderRadius: 10, border: "none", background: th.accent,
+                color: "#fff", fontWeight: 700, fontSize: 16, cursor: "pointer", fontFamily: "inherit",
+                opacity: creatingExp ? 0.6 : 1,
+              }}>{creatingExp ? "Creating..." : "Create Experiment"}</button>
+              <button onClick={() => setShowNewExp(false)} style={{
+                padding: "12px 20px", borderRadius: 10, border: `1px solid ${th.border}`,
+                background: "transparent", color: th.textSecondary, fontWeight: 600, fontSize: 16, cursor: "pointer", fontFamily: "inherit",
+              }}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}*{box-sizing:border-box;margin:0}::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:${th.border};border-radius:3px}`}</style>
     </div>
   );
