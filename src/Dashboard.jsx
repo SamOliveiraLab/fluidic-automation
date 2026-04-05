@@ -1628,27 +1628,29 @@ export default function App() {
   const addPumpLogEntry = (msg) => setPumpLog(prev => [{ time: new Date().toLocaleTimeString(), msg }, ...prev].slice(0, 50));
 
   const handleManualDose = async () => {
-    if (!experiment || !connected) return;
     setPumpRunning(true);
     addPumpLogEntry(`Manual dose: ${manualPump} pump, ${pumpVolume} mL`);
-    const expEnc = encodeURIComponent(experiment.experiment);
-    const onlineR = reactors.filter(r => r.status === "online");
-    await Promise.allSettled(
-      onlineR.map(r =>
-        pioFetch(buildApiUrl(`/api/workers/${encodeURIComponent(r.id)}/jobs/run/job_name/dosing_automation/experiments/${expEnc}`), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ options: { automation_name: "continuous_cycle", volume: parseFloat(pumpVolume), duration: 9999 } }),
-        })
-      )
-    );
-    addPumpLogEntry(`Dose sent to ${onlineR.length} reactor(s)`);
+    if (experiment && connected) {
+      const expEnc = encodeURIComponent(experiment.experiment);
+      const onlineR = reactors.filter(r => r.status === "online");
+      await Promise.allSettled(
+        onlineR.map(r =>
+          pioFetch(buildApiUrl(`/api/workers/${encodeURIComponent(r.id)}/jobs/run/job_name/dosing_automation/experiments/${expEnc}`), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ options: { automation_name: "continuous_cycle", volume: parseFloat(pumpVolume), duration: 9999 } }),
+          })
+        )
+      );
+      addPumpLogEntry(`Dose sent to ${onlineR.length} reactor(s)`);
+    } else {
+      addPumpLogEntry(`[DEMO] Would dose ${pumpVolume} mL via ${manualPump} pump`);
+    }
     setPumpRunning(false);
     setTimeout(refresh, 3000);
   };
 
   const handleStartDosing = async () => {
-    if (!experiment || !connected) return;
     setPumpRunning(true);
     const opts = {};
     if (pumpMode === "chemostat") {
@@ -1662,15 +1664,21 @@ export default function App() {
       opts.duration = parseFloat(pumpDuration);
     }
     addPumpLogEntry(`Starting ${pumpMode}: vol=${opts.volume}mL, dur=${opts.duration}min${opts.target_od ? `, OD=${opts.target_od}` : ""}`);
-    await startJob("dosing_automation", opts);
-    addPumpLogEntry(`${pumpMode} started on all online reactors`);
+    if (experiment && connected) {
+      await startJob("dosing_automation", opts);
+      addPumpLogEntry(`${pumpMode} started on all online reactors`);
+    } else {
+      addPumpLogEntry(`[DEMO] ${pumpMode} would start with these settings`);
+    }
     setPumpRunning(false);
   };
 
   const handleStopDosing = async () => {
     setPumpRunning(true);
     addPumpLogEntry("Stopping dosing automation...");
-    await stopJob("dosing_automation");
+    if (experiment && connected) {
+      await stopJob("dosing_automation");
+    }
     addPumpLogEntry("Dosing stopped");
     setPumpRunning(false);
   };
@@ -2409,39 +2417,12 @@ export default function App() {
             </div>
 
             {/* Animated Bioreactor Vials */}
-            {reactors.length > 0 && (
-              <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill,minmax(200px,1fr))`, gap: 14, marginBottom: 28 }}>
-                {reactors.filter(r => r.status === "online").map(r => {
-                  const lastOd = odData.data.length > 0 ? (() => {
-                    const last = odData.data[odData.data.length - 1];
-                    const key = odData.keys.find(k => k.key && last[k.key] != null);
-                    return key ? parseFloat(last[key.key]) || 0 : 0;
-                  })() : 0;
-                  const lastTemp = tempData.data.length > 0 ? (() => {
-                    const last = tempData.data[tempData.data.length - 1];
-                    const key = tempData.keys.find(k => k.key && last[k.key] != null);
-                    return key ? parseFloat(last[key.key]) || 0 : 0;
-                  })() : 0;
-                  const lastGr = growthData.data.length > 0 ? (() => {
-                    const last = growthData.data[growthData.data.length - 1];
-                    const key = growthData.keys.find(k => k.key && last[k.key] != null);
-                    return key ? parseFloat(last[key.key]) || 0 : 0;
-                  })() : 0;
-                  return (
-                    <AnimatedVial
-                      key={r.id}
-                      th={th}
-                      reactorName={r.label || r.id}
-                      odValue={lastOd}
-                      tempValue={lastTemp || 25}
-                      stirringRpm={400}
-                      growthRate={lastGr}
-                      pumpActive={pumpRunning}
-                    />
-                  );
-                })}
-              </div>
-            )}
+            <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill,minmax(200px,1fr))`, gap: 14, marginBottom: 28 }}>
+              {/* HARDCODED DEMO VIALS - remove these when real data is connected */}
+              <AnimatedVial th={th} reactorName="Pioreactor 01" odValue={0.85} tempValue={37} stirringRpm={450} growthRate={0.032} pumpActive={true} />
+              <AnimatedVial th={th} reactorName="Pioreactor 02" odValue={0.35} tempValue={30} stirringRpm={200} growthRate={0.008} pumpActive={false} />
+              <AnimatedVial th={th} reactorName="Pioreactor 03" odValue={1.6} tempValue={42} stirringRpm={600} growthRate={0.001} pumpActive={true} />
+            </div>
 
             <Chart th={th} {...odP} />
             <Chart th={th} {...tempP} />
@@ -2795,10 +2776,9 @@ export default function App() {
                       width: "100%", padding: "10px 14px", borderRadius: 8, border: `1px solid ${th.border}`, background: th.bgAlt,
                       color: th.text, fontSize: 16, fontFamily: "'JetBrains Mono',monospace", outline: "none", marginBottom: 18,
                     }} />
-                    <button onClick={handleManualDose} disabled={pumpRunning || !connected} style={{
-                      width: "100%", padding: "12px", borderRadius: 10, border: "none", background: connected ? th.accent : th.border,
+                    <button onClick={handleManualDose} disabled={pumpRunning} style={{
+                      width: "100%", padding: "12px", borderRadius: 10, border: "none", background: th.accent,
                       color: "#fff", fontWeight: 700, fontSize: 16, cursor: connected ? "pointer" : "not-allowed", fontFamily: "inherit",
-                      opacity: pumpRunning ? 0.6 : 1,
                     }}>{pumpRunning ? "Dosing..." : `Dose ${pumpVolume} mL (${manualPump.replace("_"," ")})`}</button>
                   </div>
                 )}
@@ -2825,9 +2805,9 @@ export default function App() {
                       color: th.text, fontSize: 16, fontFamily: "'JetBrains Mono',monospace", outline: "none", marginBottom: 18,
                     }} />
                     <div style={{ display: "flex", gap: 10 }}>
-                      <button onClick={handleStartDosing} disabled={pumpRunning || !connected} style={{
-                        flex: 1, padding: "12px", borderRadius: 10, border: "none", background: connected ? "#22c55e" : th.border,
-                        color: "#fff", fontWeight: 700, fontSize: 16, cursor: connected ? "pointer" : "not-allowed", fontFamily: "inherit",
+                      <button onClick={handleStartDosing} disabled={pumpRunning} style={{
+                        flex: 1, padding: "12px", borderRadius: 10, border: "none", background: "#22c55e",
+                        color: "#fff", fontWeight: 700, fontSize: 16, cursor: "pointer", fontFamily: "inherit",
                         opacity: pumpRunning ? 0.6 : 1,
                       }}>{pumpRunning ? "Starting..." : `Start ${pumpMode}`}</button>
                       <button onClick={handleStopDosing} disabled={pumpRunning} style={{
