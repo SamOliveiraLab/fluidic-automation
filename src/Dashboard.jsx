@@ -1692,17 +1692,19 @@ const AnimatedVial = ({
           ))}
         </g>
 
-        {/* Stir bar */}
-        <rect
-          x={100 - 15}
-          y="182"
-          width="30"
-          height="4"
-          rx="2"
-          fill={th.textMuted}
-          opacity="0.5"
-          transform={`rotate(${(tick * stirFactor * 2) % 360}, 100, 184)`}
-        />
+        {/* Stir bar - clipped to stay inside vial */}
+        <g clipPath={`url(#vialClip-${reactorName})`}>
+          <rect
+            x={100 - 15}
+            y="180"
+            width="30"
+            height="4"
+            rx="2"
+            fill={th.textMuted}
+            opacity="0.5"
+            transform={`rotate(${(tick * stirFactor * 2) % 360}, 100, 182)`}
+          />
+        </g>
 
         {/* Pump flow indicators */}
         {pumpActive && (
