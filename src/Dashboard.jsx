@@ -1696,13 +1696,13 @@ const AnimatedVial = ({
         <g clipPath={`url(#vialClip-${reactorName})`}>
           <rect
             x={100 - 15}
-            y="180"
+            y="172"
             width="30"
             height="4"
             rx="2"
             fill={th.textMuted}
             opacity="0.5"
-            transform={`rotate(${(tick * stirFactor * 2) % 360}, 100, 182)`}
+            transform={`rotate(${(tick * stirFactor * 2) % 360}, 100, 174)`}
           />
         </g>
 
