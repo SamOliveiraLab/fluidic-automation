@@ -1698,9 +1698,11 @@ const AnimatedVial = ({
         ? "#eab308"
         : "#94a3b8";
 
+  const embedded = !reactorName;
+
   return (
     <div
-      style={{
+      style={embedded ? {} : {
         background: th.surface,
         border: `1px solid ${th.border}`,
         borderRadius: 14,
@@ -1708,6 +1710,7 @@ const AnimatedVial = ({
         boxShadow: th.shadow,
       }}
     >
+      {!embedded && (
       <div
         style={{
           display: "flex",
@@ -1718,7 +1721,7 @@ const AnimatedVial = ({
       >
         <div>
           <div style={{ fontSize: 16, fontWeight: 700, color: th.text }}>
-            {reactorName || "Bioreactor Vial"}
+            {reactorName}
           </div>
           {dataStale && (
             <div
@@ -1756,6 +1759,7 @@ const AnimatedVial = ({
           </span>
         </div>
       </div>
+      )}
       <svg viewBox="0 0 200 220" style={{ width: "100%", maxHeight: 220 }}>
         {/* Vial body */}
         <defs>
@@ -3109,6 +3113,24 @@ export default function App() {
                       {r.model}
                     </span>
                   </div>
+                  {r.status !== "offline" && (() => {
+                    const tel = telemetryByReactor[r.id];
+                    const stale = chartLiveMode && (!tel || !tel.isLive);
+                    return (
+                      <div style={{ margin: "8px 0" }}>
+                        <AnimatedVial
+                          th={th}
+                          reactorName=""
+                          odValue={tel?.od != null && Number.isFinite(tel.od) ? tel.od : null}
+                          tempValue={tel?.temp != null && Number.isFinite(tel.temp) ? tel.temp : null}
+                          stirringRpm={0}
+                          growthRate={tel?.growth != null && Number.isFinite(tel.growth) ? tel.growth : undefined}
+                          pumpActive={false}
+                          dataStale={stale}
+                        />
+                      </div>
+                    );
+                  })()}
                   <div
                     style={{
                       fontFamily: "'JetBrains Mono',monospace",
@@ -3173,46 +3195,6 @@ export default function App() {
                   )}
                 </div>
               ))}
-            </div>
-
-            {/* Bioreactor vials: one per enabled unit, values from latest time-series points */}
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: `repeat(auto-fill,minmax(200px,1fr))`,
-                gap: 14,
-                marginBottom: 28,
-              }}
-            >
-              {reactors
-                .filter((r) => r.status !== "offline")
-                .map((r) => {
-                  const tel = telemetryByReactor[r.id];
-                  const stale = chartLiveMode && (!tel || !tel.isLive);
-                  return (
-                    <AnimatedVial
-                      key={r.id}
-                      th={th}
-                      reactorName={r.label}
-                      odValue={
-                        tel?.od != null && Number.isFinite(tel.od) ? tel.od : null
-                      }
-                      tempValue={
-                        tel?.temp != null && Number.isFinite(tel.temp)
-                          ? tel.temp
-                          : null
-                      }
-                      stirringRpm={0}
-                      growthRate={
-                        tel?.growth != null && Number.isFinite(tel.growth)
-                          ? tel.growth
-                          : undefined
-                      }
-                      pumpActive={false}
-                      dataStale={stale}
-                    />
-                  );
-                })}
             </div>
 
             <Chart th={th} {...odP} />
