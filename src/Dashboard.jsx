@@ -1729,7 +1729,7 @@ const AnimatedVial = ({
                 marginTop: 4,
               }}
             >
-              No recent telemetry
+              Idle — start readings
             </div>
           )}
         </div>
@@ -2602,7 +2602,7 @@ export default function App() {
             >
               {connected
                 ? chartLiveMode
-                  ? `${streamingCount} of ${reactors.length} live`
+                  ? `${online} of ${reactors.length} connected`
                   : `${online} of ${reactors.length} enabled`
                 : "Offline - Not Connected"}
             </span>
@@ -3138,20 +3138,21 @@ export default function App() {
                   {chartLiveMode &&
                     r.status === "online" &&
                     telemetryByReactor[r.id] &&
-                    !telemetryByReactor[r.id].isLive && (
+                    !telemetryByReactor[r.id].isLive &&
+                    r.status === "online" && (
                       <div
                         style={{
                           marginTop: 10,
                           padding: "8px 10px",
                           borderRadius: 8,
-                          background: th.warningBg,
-                          border: `1px solid ${th.warning}20`,
+                          background: `${th.accent}10`,
+                          border: `1px solid ${th.accent}20`,
                           fontSize: 14,
-                          color: th.warning,
+                          color: th.accent,
                           fontWeight: 500,
                         }}
                       >
-                        No data in the last few minutes — unit may be offline
+                        Connected — start OD readings to begin monitoring
                       </div>
                     )}
                   {r.status === "warning" && (
@@ -3235,9 +3236,9 @@ export default function App() {
                 <p style={{ margin: 0, fontSize: 17, color: th.textSecondary }}>
                   {reactors.length} bioreactors ·{" "}
                   {chartLiveMode
-                    ? `${streamingCount} live · `
+                    ? `${streamingCount} streaming · `
                     : ""}
-                  {online} enabled ·{" "}
+                  {online} connected ·{" "}
                   {reactors.filter((r) => r.status === "offline").length} excluded
                 </p>
               </div>
