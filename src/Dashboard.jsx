@@ -2193,26 +2193,28 @@ export default function App() {
     if (experiment && connected) {
       const expEnc = encodeURIComponent(experiment.experiment);
       const onlineR = reactors.filter((r) => r.status === "online");
-      // Map pump selection to correct Pioreactor job name
       const jobMap = { media: "add_media", waste: "remove_waste", alt_media: "add_alt_media" };
       const jobName = jobMap[manualPump] || "add_media";
-      await Promise.allSettled(
-        onlineR.map((r) =>
-          pioFetch(
-            buildApiUrl(
-              `/api/workers/${encodeURIComponent(r.id)}/jobs/run/job_name/${jobName}/experiments/${expEnc}`,
-            ),
-            {
-              method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                options: { ml: String(parseFloat(pumpVolume)) },
-              }),
-            },
-          ),
-        ),
+      const results = await Promise.allSettled(
+        onlineR.map(async (r) => {
+          const url = buildApiUrl(
+            `/api/workers/${encodeURIComponent(r.id)}/jobs/run/job_name/${jobName}/experiments/${expEnc}`,
+          );
+          addPumpLogEntry(`Calling: ${jobName} on ${r.id}`);
+          const res = await pioFetch(url, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              options: { ml: String(parseFloat(pumpVolume)) },
+            }),
+          });
+          const text = await res.text();
+          addPumpLogEntry(`Response ${res.status}: ${text.slice(0, 100)}`);
+          return res;
+        }),
       );
-      addPumpLogEntry(`Dose sent to ${onlineR.length} reactor(s)`);
+      const ok = results.filter(r => r.status === "fulfilled").length;
+      addPumpLogEntry(`Done: ${ok}/${onlineR.length} succeeded`);
     } else {
       addPumpLogEntry(
         `[DEMO] Would dose ${pumpVolume} mL via ${manualPump} pump`,
