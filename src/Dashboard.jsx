@@ -155,7 +155,7 @@ const transformWorkers = (raw) => {
     role: i === 0 ? "Leader + Worker" : "Worker",
     // is_active = enabled in cluster config, not the same as physically reporting data
     status: w.is_active ? "online" : "offline",
-    model: `${w.model_name?.replace("pioreactor_", "") || "unknown"} v${w.model_version || "?"}`,
+    model: `${w.model_name?.replace("pioreactor_", "").replace("40ml", "20ml") || "unknown"} v${w.model_version || "?"}`,
     addedAt: w.added_at,
   }));
 };
@@ -3184,26 +3184,6 @@ export default function App() {
                       outline: "none",
                     }}
                   />
-                  {chartLiveMode &&
-                    r.status === "online" &&
-                    telemetryByReactor[r.id] &&
-                    !telemetryByReactor[r.id].isLive &&
-                    r.status === "online" && (
-                      <div
-                        style={{
-                          marginTop: 10,
-                          padding: "8px 10px",
-                          borderRadius: 8,
-                          background: `${th.accent}10`,
-                          border: `1px solid ${th.accent}20`,
-                          fontSize: 14,
-                          color: th.accent,
-                          fontWeight: 500,
-                        }}
-                      >
-                        Connected - start OD readings to begin monitoring
-                      </div>
-                    )}
                   {r.status === "warning" && (
                     <div
                       style={{
