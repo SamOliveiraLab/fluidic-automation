@@ -116,7 +116,7 @@ const transformTimeSeries = (raw, workers) => {
   });
 
   let data = Object.values(timeMap).sort((a, b) => a._ts - b._ts);
-  // Latest sample per series *before* downsampling — decimation drops tail rows and
+  // Latest sample per series *before* downsampling - decimation drops tail rows and
   // would otherwise make "live" detection think data is minutes old.
   const latestByKey = {};
   for (const row of data) {
@@ -428,7 +428,7 @@ const usePioreactorData = () => {
       const reactor = prev.find((r) => r.id === id);
       if (!reactor) return prev;
       const newStatus = reactor.status === "offline" ? "online" : "offline";
-      // Update overrides — store "offline" overrides, remove "online" ones (API default)
+      // Update overrides - store "offline" overrides, remove "online" ones (API default)
       const newOverrides = { ...statusOverridesRef.current };
       if (newStatus === "offline") {
         newOverrides[id] = "offline";
@@ -437,7 +437,7 @@ const usePioreactorData = () => {
       }
       statusOverridesRef.current = newOverrides;
       saveOverrides(newOverrides);
-      // Try API call (fire-and-forget) — try both endpoint formats
+      // Try API call (fire-and-forget) - try both endpoint formats
       const newActive = newStatus === "online" ? 1 : 0;
       pioFetch(buildApiUrl(`/api/workers/${encodeURIComponent(id)}`), {
         method: "PATCH",
@@ -496,16 +496,15 @@ const usePioreactorData = () => {
     const expEnc = encodeURIComponent(experiment.experiment);
     const onlineReactors = reactors.filter((r) => r.status === "online");
     await Promise.allSettled(
-      onlineReactors.map((r) =>
-        pioFetch(
-          buildApiUrl(
-            `/api/workers/${encodeURIComponent(r.id)}/jobs/stop/job_name/${jobName}/experiments/${expEnc}`,
-          ),
-          {
-            method: "POST",
-          },
-        ),
-      ),
+      onlineReactors.map((r) => {
+        const url = buildApiUrl(
+          `/api/workers/${encodeURIComponent(r.id)}/jobs/stop/job_name/${jobName}/experiments/${expEnc}`,
+        );
+        // Try PATCH first (per Pioreactor docs), fallback to POST
+        return pioFetch(url, { method: "PATCH" }).catch(() =>
+          pioFetch(url, { method: "POST" })
+        );
+      }),
     );
     setTimeout(fetchAll, 2000);
   };
@@ -1732,7 +1731,7 @@ const AnimatedVial = ({
                 marginTop: 4,
               }}
             >
-              Idle — start readings
+              Idle - start readings
             </div>
           )}
         </div>
@@ -3123,7 +3122,7 @@ export default function App() {
                           reactorName=""
                           odValue={tel?.od != null && Number.isFinite(tel.od) ? tel.od : null}
                           tempValue={tel?.temp != null && Number.isFinite(tel.temp) ? tel.temp : null}
-                          stirringRpm={0}
+                          stirringRpm={400}
                           growthRate={tel?.growth != null && Number.isFinite(tel.growth) ? tel.growth : undefined}
                           pumpActive={false}
                           dataStale={stale}
@@ -3174,7 +3173,7 @@ export default function App() {
                           fontWeight: 500,
                         }}
                       >
-                        Connected — start OD readings to begin monitoring
+                        Connected - start OD readings to begin monitoring
                       </div>
                     )}
                   {r.status === "warning" && (
