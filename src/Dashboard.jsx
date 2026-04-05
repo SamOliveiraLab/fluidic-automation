@@ -3111,7 +3111,7 @@ export default function App() {
                             color: th.text,
                           }}
                         >
-                          {r.label}
+                          {getCultureLabel(r.id) || r.label}
                         </span>
                       </div>
                       <span
@@ -3315,7 +3315,7 @@ export default function App() {
                           color: th.text,
                         }}
                       >
-                        {r.label}
+                        {getCultureLabel(r.id) || r.label}
                       </span>
                       <span
                         style={{
