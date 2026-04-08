@@ -2283,13 +2283,10 @@ export default function App() {
     const FRESH_MS = 120_000; // 2 minutes
     const now = Date.now();
     const hasFreshData = (series) => {
-      if (!series?.data?.length) return false;
-      for (const arr of series.data) {
-        if (!arr?.length) continue;
-        const last = arr[arr.length - 1];
-        if (last?.x && (now - new Date(last.x).getTime()) < FRESH_MS) return true;
-      }
-      return false;
+      if (!series?.latestByKey) return false;
+      return Object.values(series.latestByKey).some(
+        (v) => v?.ts && (now - v.ts) < FRESH_MS
+      );
     };
     // Only auto-detect if user hasn't clicked a button in the last 15s
     const override = manualJobOverride.current;
