@@ -2269,6 +2269,7 @@ export default function App() {
 
   const [stopping, setStopping] = useState({});
   const [targetTemp, setTargetTemp] = useState("30");
+  const [targetRpm, setTargetRpm] = useState("400");
   const [runningJobs, setRunningJobs] = useState({});
 
   const handleStopJob = async (jobName) => {
@@ -3026,6 +3027,80 @@ export default function App() {
               )}
             </div>
 
+            {/* Quick Controls Bar */}
+            <div style={{
+              display: "flex", alignItems: "center", gap: 10, marginBottom: 16, padding: "10px 16px",
+              background: th.surface, border: `1px solid ${th.border}`, borderRadius: 12, boxShadow: th.shadow, flexWrap: "wrap",
+            }}>
+              {/* Stirring */}
+              <span style={{ fontSize: 13, fontWeight: 700, color: th.textMuted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Stirring</span>
+              <input type="number" value={targetRpm} onChange={e => setTargetRpm(e.target.value)} step="50" min="0" max="1200" style={{
+                width: 65, padding: "5px 8px", borderRadius: 6, border: `1px solid ${th.border}`, background: th.bgAlt,
+                color: th.text, fontSize: 14, fontFamily: "'JetBrains Mono',monospace", textAlign: "center", outline: "none",
+              }} />
+              <span style={{ fontSize: 12, color: th.textMuted }}>RPM</span>
+              <button onClick={() => {
+                handleStartJob("stirring", { target_rpm: targetRpm });
+                setRunningJobs(prev => ({ ...prev, stirring: true }));
+              }} style={{
+                padding: "5px 12px", borderRadius: 6, fontSize: 13, fontWeight: 700, fontFamily: "inherit", cursor: "pointer",
+                background: runningJobs.stirring ? th.dangerBg : `${th.success}15`,
+                border: `1px solid ${runningJobs.stirring ? th.danger : th.success}40`,
+                color: runningJobs.stirring ? th.danger : th.success,
+              }} >{runningJobs.stirring ? "● Running" : "▶ Start"}</button>
+              {runningJobs.stirring && (
+                <>
+                  <button onClick={() => {
+                    if (!experiment) return;
+                    const expEnc = encodeURIComponent(experiment.experiment);
+                    reactors.filter(r => r.status === "online").forEach(r => {
+                      pioFetch(buildApiUrl(`/api/workers/${encodeURIComponent(r.id)}/jobs/update/job_name/stirring/experiments/${expEnc}`), {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ settings: { target_rpm: targetRpm } }),
+                      });
+                    });
+                  }} style={{
+                    padding: "5px 10px", borderRadius: 6, fontSize: 12, fontWeight: 700, fontFamily: "inherit",
+                    background: th.accentLight, border: `1px solid ${th.accent}40`, color: th.accent, cursor: "pointer",
+                  }}>Set RPM</button>
+                  <button onClick={() => {
+                    handleStopJob("stirring");
+                    setRunningJobs(prev => ({ ...prev, stirring: false }));
+                  }} style={{
+                    padding: "5px 10px", borderRadius: 6, fontSize: 12, fontWeight: 700, fontFamily: "inherit",
+                    background: th.dangerBg, border: `1px solid ${th.danger}40`, color: th.danger, cursor: "pointer",
+                  }}>■ Stop</button>
+                </>
+              )}
+
+              <div style={{ width: 1, height: 24, background: th.border, margin: "0 6px" }} />
+
+              {/* Quick start/stop all readings */}
+              <span style={{ fontSize: 13, fontWeight: 700, color: th.textMuted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Readings</span>
+              <button onClick={async () => {
+                await handleStartJob("stirring", { target_rpm: targetRpm });
+                setRunningJobs(prev => ({ ...prev, stirring: true }));
+                setTimeout(() => handleStartJob("od_reading"), 3000);
+                setTimeout(() => handleStartJob("growth_rate_calculating"), 6000);
+                setTimeout(() => {
+                  setRunningJobs(prev => ({ ...prev, od_reading: true, growth_rate_calculating: true }));
+                }, 7000);
+              }} style={{
+                padding: "5px 14px", borderRadius: 6, fontSize: 13, fontWeight: 700, fontFamily: "inherit",
+                background: `${th.success}15`, border: `1px solid ${th.success}40`, color: th.success, cursor: "pointer",
+              }}>▶ Start All</button>
+              <button onClick={async () => {
+                await handleStopJob("od_reading");
+                await handleStopJob("growth_rate_calculating");
+                await handleStopJob("stirring");
+                setRunningJobs(prev => ({ ...prev, od_reading: false, growth_rate_calculating: false, stirring: false }));
+              }} style={{
+                padding: "5px 14px", borderRadius: 6, fontSize: 13, fontWeight: 700, fontFamily: "inherit",
+                background: th.dangerBg, border: `1px solid ${th.danger}40`, color: th.danger, cursor: "pointer",
+              }}>■ Stop All</button>
+            </div>
+
             <TimeRangeBar
               th={th}
               timeRange={timeRange}
@@ -3152,7 +3227,7 @@ export default function App() {
                           reactorName=""
                           odValue={tel?.od != null && Number.isFinite(tel.od) ? tel.od : null}
                           tempValue={tel?.temp != null && Number.isFinite(tel.temp) ? tel.temp : null}
-                          stirringRpm={400}
+                          stirringRpm={runningJobs.stirring ? parseInt(targetRpm) || 400 : 0}
                           growthRate={tel?.growth != null && Number.isFinite(tel.growth) ? tel.growth : undefined}
                           pumpActive={false}
                           dataStale={stale}
