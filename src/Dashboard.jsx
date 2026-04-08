@@ -465,6 +465,10 @@ const usePioreactorData = () => {
     if (!onlineReactors.length)
       return { success: false, error: "No online bioreactors" };
 
+    const stringOpts = {};
+    for (const [k, v] of Object.entries(options)) {
+      stringOpts[k] = String(v);
+    }
     const results = await Promise.allSettled(
       onlineReactors.map((r) =>
         pioFetch(
@@ -472,9 +476,9 @@ const usePioreactorData = () => {
             `/api/workers/${encodeURIComponent(r.id)}/jobs/run/job_name/${jobName}/experiments/${expEnc}`,
           ),
           {
-            method: "POST",
+            method: "PATCH",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ options }),
+            body: JSON.stringify({ options: stringOpts }),
           },
         ),
       ),
@@ -3091,9 +3095,9 @@ export default function App() {
                     const expEnc = encodeURIComponent(experiment.experiment);
                     reactors.filter(r => r.status === "online").forEach(r => {
                       pioFetch(buildApiUrl(`/api/workers/${encodeURIComponent(r.id)}/jobs/update/job_name/stirring/experiments/${expEnc}`), {
-                        method: "POST",
+                        method: "PATCH",
                         headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ settings: { target_rpm: targetRpm } }),
+                        body: JSON.stringify({ settings: { target_rpm: String(targetRpm) } }),
                       });
                     });
                   }} style={{
