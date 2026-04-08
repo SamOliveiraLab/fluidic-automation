@@ -1078,10 +1078,11 @@ const Chart = ({
                   <CartesianGrid strokeDasharray="3 3" stroke={th.gridLine} />
                   <XAxis
                     dataKey="t"
-                    tick={{ fontSize: 14, fill: th.textMuted }}
+                    tick={{ fontSize: 12, fill: th.textMuted }}
                     axisLine={{ stroke: th.border }}
                     tickLine={false}
-                    interval={5}
+                    interval="preserveStartEnd"
+                    minTickGap={60}
                   />
                   <YAxis
                     domain={["auto", "auto"]}
@@ -1981,13 +1982,15 @@ const TimeRangeBar = ({ th, timeRange, setTimeRange, refresh }) => {
         display: "flex",
         alignItems: "center",
         gap: 8,
-        flexWrap: "wrap",
+        flexWrap: "nowrap",
+        overflowX: "auto",
         marginBottom: 16,
         padding: "12px 16px",
         background: th.surface,
         border: `1px solid ${th.border}`,
         borderRadius: 12,
         boxShadow: th.shadow,
+        WebkitOverflowScrolling: "touch",
       }}
     >
       <span
@@ -2271,6 +2274,29 @@ export default function App() {
   const [targetTemp, setTargetTemp] = useState("30");
   const [targetRpm, setTargetRpm] = useState("400");
   const [runningJobs, setRunningJobs] = useState({});
+
+  // Detect running jobs on load and every refresh
+  useEffect(() => {
+    if (!connected || !reactors.length) return;
+    const leader = reactors[0];
+    if (!leader) return;
+    const checkJobs = async () => {
+      try {
+        const res = await pioFetch(buildApiUrl(`/api/workers/${encodeURIComponent(leader.id)}/jobs/running`));
+        if (res.ok) {
+          const jobs = await res.json();
+          if (Array.isArray(jobs)) {
+            const running = {};
+            jobs.forEach(j => { if (j.name) running[j.name] = true; });
+            setRunningJobs(running);
+          }
+        }
+      } catch {}
+    };
+    checkJobs();
+    const id = setInterval(checkJobs, REFRESH_INTERVAL);
+    return () => clearInterval(id);
+  }, [connected, reactors.length]);
 
   const handleStopJob = async (jobName) => {
     setStopping((prev) => ({ ...prev, [jobName]: true }));
@@ -2952,7 +2978,7 @@ export default function App() {
         </div>
 
         {page === "overview" && (
-          <div style={{ padding: "24px" }}>
+          <div style={{ padding: typeof window !== "undefined" && window.innerWidth < 768 ? "12px" : "24px" }}>
             {/* Experiment Selector Bar */}
             <div
               style={{
@@ -2992,7 +3018,8 @@ export default function App() {
                   fontWeight: 600,
                   fontFamily: "inherit",
                   cursor: "pointer",
-                  minWidth: 200,
+                  minWidth: 140,
+                  maxWidth: "60vw",
                   outline: "none",
                 }}
               >
@@ -3110,7 +3137,7 @@ export default function App() {
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "repeat(auto-fill,minmax(240px,1fr))",
+                gridTemplateColumns: "repeat(auto-fill,minmax(200px,1fr))",
                 gap: 14,
                 marginBottom: 28,
               }}
