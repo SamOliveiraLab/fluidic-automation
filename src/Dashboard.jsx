@@ -2264,6 +2264,7 @@ export default function App() {
 
   const handleStartJob = async (jobName, options = {}) => {
     setStarting((prev) => ({ ...prev, [jobName]: true }));
+    manualJobOverride.current[jobName] = Date.now();
     const result = await startJob(jobName, options);
     setRunningJobs((prev) => ({ ...prev, [jobName]: true }));
     setStarting((prev) => ({ ...prev, [jobName]: false }));
@@ -2274,32 +2275,43 @@ export default function App() {
   const [targetTemp, setTargetTemp] = useState("30");
   const [targetRpm, setTargetRpm] = useState("400");
   const [runningJobs, setRunningJobs] = useState({});
+  const manualJobOverride = useRef({}); // tracks recent button clicks
 
-  // Detect running jobs on load and every refresh
+  // Detect running jobs from telemetry freshness
   useEffect(() => {
-    if (!connected || !reactors.length) return;
-    const leader = reactors[0];
-    if (!leader) return;
-    const checkJobs = async () => {
-      try {
-        const res = await pioFetch(buildApiUrl(`/api/workers/${encodeURIComponent(leader.id)}/jobs/running`));
-        if (res.ok) {
-          const jobs = await res.json();
-          if (Array.isArray(jobs)) {
-            const running = {};
-            jobs.forEach(j => { if (j.name) running[j.name] = true; });
-            setRunningJobs(running);
-          }
-        }
-      } catch {}
+    if (!connected) return;
+    const FRESH_MS = 120_000; // 2 minutes
+    const now = Date.now();
+    const hasFreshData = (series) => {
+      if (!series?.data?.length) return false;
+      for (const arr of series.data) {
+        if (!arr?.length) continue;
+        const last = arr[arr.length - 1];
+        if (last?.x && (now - new Date(last.x).getTime()) < FRESH_MS) return true;
+      }
+      return false;
     };
-    checkJobs();
-    const id = setInterval(checkJobs, REFRESH_INTERVAL);
-    return () => clearInterval(id);
-  }, [connected, reactors.length]);
+    // Only auto-detect if user hasn't clicked a button in the last 15s
+    const override = manualJobOverride.current;
+    const use = (job, detected) => {
+      if (override[job] && (now - override[job]) < 15000) return; // skip, user just clicked
+      return detected;
+    };
+    const odRunning = hasFreshData(odData);
+    const tempRunning = hasFreshData(tempData);
+    const grRunning = hasFreshData(growthData);
+    setRunningJobs(prev => ({
+      ...prev,
+      od_reading: use("od_reading", odRunning) ?? prev.od_reading,
+      temperature_automation: use("temperature_automation", tempRunning) ?? prev.temperature_automation,
+      growth_rate_calculating: use("growth_rate_calculating", grRunning) ?? prev.growth_rate_calculating,
+      stirring: use("stirring", odRunning) ?? prev.stirring,
+    }));
+  }, [connected, odData, tempData, growthData]);
 
   const handleStopJob = async (jobName) => {
     setStopping((prev) => ({ ...prev, [jobName]: true }));
+    manualJobOverride.current[jobName] = Date.now();
     await stopJob(jobName);
     setRunningJobs((prev) => ({ ...prev, [jobName]: false }));
     setStopping((prev) => ({ ...prev, [jobName]: false }));
