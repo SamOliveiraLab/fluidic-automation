@@ -1011,34 +1011,46 @@ const Chart = ({
             >
               ↓ PNG
             </button>
-            {has && onStartAction && onStopAction && (
+            {onStartAction && onStopAction && (
               <>
                 <span style={{
-                  fontSize: 12, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace",
+                  fontSize: 11, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace",
                   color: isRunning ? th.success : th.textMuted,
-                  background: isRunning ? `${th.success}15` : th.bgAlt,
-                  padding: "4px 10px", borderRadius: 20,
+                  background: isRunning ? `${th.success}12` : th.bgAlt,
+                  padding: "4px 8px", borderRadius: 20,
                 }}>
-                  {isRunning ? "● RUNNING" : "○ STOPPED"}
+                  {isRunning ? "RUNNING" : "STOPPED"}
                 </span>
-                <button
-                  onClick={isRunning ? onStopAction : onStartAction}
+                <select
+                  value=""
+                  onChange={(e) => {
+                    const action = e.target.value;
+                    e.target.value = "";
+                    if (action === "start") onStartAction();
+                    else if (action === "stop") onStopAction();
+                    else if (action === "restart") {
+                      onStopAction();
+                      setTimeout(() => onStartAction(), 3000);
+                    }
+                  }}
                   style={{
-                    padding: "5px 12px",
+                    padding: "5px 8px",
                     borderRadius: 6,
-                    fontSize: 14,
+                    fontSize: 13,
                     fontWeight: 700,
                     fontFamily: "inherit",
-                    background: isRunning ? th.dangerBg : `${th.success}15`,
-                    border: `1px solid ${isRunning ? th.danger : th.success}40`,
-                    color: isRunning ? th.danger : th.success,
+                    background: th.bgAlt,
+                    border: `1px solid ${th.border}`,
+                    color: th.text,
                     cursor: "pointer",
+                    outline: "none",
                   }}
                 >
-                  {isRunning
-                    ? (stopLabel || "■ Stop")
-                    : (startLabel || "▶ Start")}
-                </button>
+                  <option value="" disabled>Actions</option>
+                  <option value="start">▶ Start</option>
+                  <option value="stop">■ Stop</option>
+                  <option value="restart">↻ Restart</option>
+                </select>
               </>
             )}
             {headerExtra}
