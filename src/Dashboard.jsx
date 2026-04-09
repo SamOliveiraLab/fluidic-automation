@@ -457,8 +457,23 @@ const usePioreactorData = () => {
     });
   };
 
+  // Assign a worker to the current experiment
+  const assignWorker = async (unitId, expName) => {
+    const expEnc = encodeURIComponent(expName);
+    // Try multiple endpoint formats since Pioreactor versions differ
+    await pioFetch(buildApiUrl(`/api/experiments/${expEnc}/workers`), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pioreactor_unit: unitId }),
+    }).catch(() =>
+      pioFetch(buildApiUrl(`/api/experiments/${expEnc}/workers/${encodeURIComponent(unitId)}`), {
+        method: "PUT",
+      })
+    ).catch(() => {});
+  };
+
   // Start a job on all online workers
-  // Official Pioreactor API: POST /api/workers/{unit}/jobs/run/job_name/{job}/experiments/{exp}
+  // Auto-assigns worker if it gets a 404 "not assigned" error, then retries
   const startJob = async (jobName, options = {}) => {
     if (!experiment) return { success: false, error: "No active experiment" };
     const expEnc = encodeURIComponent(experiment.experiment);
@@ -466,19 +481,28 @@ const usePioreactorData = () => {
     if (!onlineReactors.length)
       return { success: false, error: "No online bioreactors" };
 
-    const results = await Promise.allSettled(
-      onlineReactors.map((r) =>
-        pioFetch(
-          buildApiUrl(
-            `/api/workers/${encodeURIComponent(r.id)}/jobs/run/job_name/${jobName}/experiments/${expEnc}`,
-          ),
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ options }),
-          },
+    const tryRun = (r) =>
+      pioFetch(
+        buildApiUrl(
+          `/api/workers/${encodeURIComponent(r.id)}/jobs/run/job_name/${jobName}/experiments/${expEnc}`,
         ),
-      ),
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ options }),
+        },
+      );
+
+    const results = await Promise.allSettled(
+      onlineReactors.map(async (r) => {
+        const res = await tryRun(r);
+        if (res.status === 404) {
+          // Auto-assign worker and retry
+          await assignWorker(r.id, experiment.experiment);
+          return tryRun(r);
+        }
+        return res;
+      }),
     );
     const succeeded = results.filter(
       (r) => r.status === "fulfilled" && r.value?.ok,
@@ -2232,14 +2256,20 @@ export default function App() {
           const url = buildApiUrl(
             `/api/workers/${encodeURIComponent(r.id)}/jobs/run/job_name/${jobName}/experiments/${expEnc}`,
           );
-          addPumpLogEntry(`Calling: ${jobName} on ${r.id}`);
-          const res = await pioFetch(url, {
+          const doFetch = () => pioFetch(url, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               options: { ml: String(parseFloat(pumpVolume)) },
             }),
           });
+          addPumpLogEntry(`Calling: ${jobName} on ${r.id}`);
+          let res = await doFetch();
+          if (res.status === 404) {
+            addPumpLogEntry(`Assigning ${r.id} to experiment and retrying...`);
+            await assignWorker(r.id, experiment.experiment);
+            res = await doFetch();
+          }
           const text = await res.text();
           addPumpLogEntry(`Response ${res.status}: ${text.slice(0, 100)}`);
           return res;
@@ -3099,6 +3129,18 @@ export default function App() {
                   {experiment.description}
                 </span>
               )}
+              <button
+                onClick={async () => {
+                  if (!experiment) return;
+                  if (!confirm(`Delete "${experiment.experiment}"? This stops all jobs and removes all data for this experiment.`)) return;
+                  await pioFetch(buildApiUrl(`/api/experiments/${encodeURIComponent(experiment.experiment)}`), { method: "DELETE" });
+                  setTimeout(refresh, 500);
+                }}
+                style={{
+                  padding: "4px 10px", borderRadius: 6, fontSize: 12, fontWeight: 600, fontFamily: "inherit",
+                  background: th.dangerBg, border: `1px solid ${th.danger}30`, color: th.danger, cursor: "pointer", marginLeft: "auto",
+                }}
+              >Delete Experiment</button>
             </div>
 
             {/* Quick Controls Bar */}
