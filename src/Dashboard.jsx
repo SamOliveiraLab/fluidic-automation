@@ -458,16 +458,13 @@ const usePioreactorData = () => {
   };
 
   // Start a job on all online workers
+  // Official Pioreactor API: POST /api/workers/{unit}/jobs/run/job_name/{job}/experiments/{exp}
   const startJob = async (jobName, options = {}) => {
     if (!experiment) return { success: false, error: "No active experiment" };
     const expEnc = encodeURIComponent(experiment.experiment);
     const onlineReactors = reactors.filter((r) => r.status === "online");
     if (!onlineReactors.length)
       return { success: false, error: "No online bioreactors" };
-
-    // Stringify all option values (Pioreactor expects strings)
-    const strOpts = {};
-    Object.entries(options).forEach(([k, v]) => { strOpts[k] = String(v); });
 
     const results = await Promise.allSettled(
       onlineReactors.map((r) =>
@@ -476,9 +473,9 @@ const usePioreactorData = () => {
             `/api/workers/${encodeURIComponent(r.id)}/jobs/run/job_name/${jobName}/experiments/${expEnc}`,
           ),
           {
-            method: "PATCH",
+            method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ options: strOpts }),
+            body: JSON.stringify({ options }),
           },
         ),
       ),
@@ -486,7 +483,6 @@ const usePioreactorData = () => {
     const succeeded = results.filter(
       (r) => r.status === "fulfilled" && r.value?.ok,
     ).length;
-    // Refresh data after a short delay to pick up new readings
     setTimeout(fetchAll, 3000);
     return {
       success: succeeded > 0,
@@ -496,20 +492,20 @@ const usePioreactorData = () => {
   };
 
   // Stop a job on all online workers
+  // Official Pioreactor API: POST /api/workers/{unit}/jobs/stop/job_name/{job}/experiments/{exp}
   const stopJob = async (jobName) => {
     if (!experiment) return;
     const expEnc = encodeURIComponent(experiment.experiment);
     const onlineReactors = reactors.filter((r) => r.status === "online");
     await Promise.allSettled(
-      onlineReactors.map((r) => {
-        const url = buildApiUrl(
-          `/api/workers/${encodeURIComponent(r.id)}/jobs/stop/job_name/${jobName}/experiments/${expEnc}`,
-        );
-        // Try PATCH first (per Pioreactor docs), fallback to POST
-        return pioFetch(url, { method: "PATCH" }).catch(() =>
-          pioFetch(url, { method: "POST" })
-        );
-      }),
+      onlineReactors.map((r) =>
+        pioFetch(
+          buildApiUrl(
+            `/api/workers/${encodeURIComponent(r.id)}/jobs/stop/job_name/${jobName}/experiments/${expEnc}`,
+          ),
+          { method: "POST" },
+        ),
+      ),
     );
     setTimeout(fetchAll, 2000);
   };
@@ -2209,7 +2205,7 @@ export default function App() {
           );
           addPumpLogEntry(`Calling: ${jobName} on ${r.id}`);
           const res = await pioFetch(url, {
-            method: "PATCH",
+            method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               options: { ml: String(parseFloat(pumpVolume)) },
@@ -3097,7 +3093,7 @@ export default function App() {
                     const expEnc = encodeURIComponent(experiment.experiment);
                     reactors.filter(r => r.status === "online").forEach(r => {
                       pioFetch(buildApiUrl(`/api/workers/${encodeURIComponent(r.id)}/jobs/update/job_name/stirring/experiments/${expEnc}`), {
-                        method: "PATCH",
+                        method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ settings: { target_rpm: String(targetRpm) } }),
                       });
