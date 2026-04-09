@@ -524,6 +524,23 @@ const usePioreactorData = () => {
         body: JSON.stringify({ experiment: name, description }),
       });
       if (res?.ok) {
+        // Auto-assign all active workers to the new experiment
+        const activeWorkers = reactors.filter(r => r.status !== "offline");
+        await Promise.allSettled(
+          activeWorkers.map(r =>
+            pioFetch(buildApiUrl(`/api/experiments/${encodeURIComponent(name)}/workers`), {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ pioreactor_unit: r.id }),
+            }).catch(() =>
+              // Try alternate endpoint format
+              pioFetch(buildApiUrl(`/api/experiments/${encodeURIComponent(name)}/workers/${encodeURIComponent(r.id)}`), {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+              })
+            ).catch(() => {})
+          )
+        );
         setSelectedExpName(name);
         selectedExpRef.current = name;
         setTimeout(fetchAll, 500);
@@ -2228,8 +2245,13 @@ export default function App() {
           return res;
         }),
       );
-      const ok = results.filter(r => r.status === "fulfilled").length;
-      addPumpLogEntry(`Done: ${ok}/${onlineR.length} succeeded`);
+      const ok = results.filter(r => r.status === "fulfilled" && r.value?.ok).length;
+      const failed = results.filter(r => r.status === "fulfilled" && !r.value?.ok).length;
+      if (failed > 0) {
+        addPumpLogEntry(`WARNING: ${failed}/${onlineR.length} failed - check worker assignment`);
+      } else {
+        addPumpLogEntry(`Done: ${ok}/${onlineR.length} succeeded`);
+      }
     } else {
       addPumpLogEntry(
         `[DEMO] Would dose ${pumpVolume} mL via ${manualPump} pump`,
@@ -2284,8 +2306,12 @@ export default function App() {
   };
 
   const [stopping, setStopping] = useState({});
-  const [targetTemp, setTargetTemp] = useState("30");
-  const [targetRpm, setTargetRpm] = useState("400");
+  const [targetTemp, setTargetTemp] = useState(() => localStorage.getItem("pio_targetTemp") || "30");
+  const [targetRpm, setTargetRpm] = useState(() => localStorage.getItem("pio_targetRpm") || "400");
+
+  // Persist settings
+  useEffect(() => { localStorage.setItem("pio_targetTemp", targetTemp); }, [targetTemp]);
+  useEffect(() => { localStorage.setItem("pio_targetRpm", targetRpm); }, [targetRpm]);
   const [runningJobs, setRunningJobs] = useState({});
   const manualJobOverride = useRef({}); // tracks recent button clicks
 
