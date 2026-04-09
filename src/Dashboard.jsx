@@ -465,10 +465,10 @@ const usePioreactorData = () => {
     if (!onlineReactors.length)
       return { success: false, error: "No online bioreactors" };
 
-    const stringOpts = {};
-    for (const [k, v] of Object.entries(options)) {
-      stringOpts[k] = String(v);
-    }
+    // Stringify all option values (Pioreactor expects strings)
+    const strOpts = {};
+    Object.entries(options).forEach(([k, v]) => { strOpts[k] = String(v); });
+
     const results = await Promise.allSettled(
       onlineReactors.map((r) =>
         pioFetch(
@@ -478,7 +478,7 @@ const usePioreactorData = () => {
           {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ options: stringOpts }),
+            body: JSON.stringify({ options: strOpts }),
           },
         ),
       ),
@@ -3080,17 +3080,19 @@ export default function App() {
               }} />
               <span style={{ fontSize: 12, color: th.textMuted }}>RPM</span>
               <button onClick={() => {
-                handleStartJob("stirring", { target_rpm: targetRpm });
-                setRunningJobs(prev => ({ ...prev, stirring: true }));
+                if (runningJobs.stirring) {
+                  handleStopJob("stirring");
+                } else {
+                  handleStartJob("stirring", { target_rpm: targetRpm });
+                }
               }} style={{
                 padding: "5px 12px", borderRadius: 6, fontSize: 13, fontWeight: 700, fontFamily: "inherit", cursor: "pointer",
                 background: runningJobs.stirring ? th.dangerBg : `${th.success}15`,
                 border: `1px solid ${runningJobs.stirring ? th.danger : th.success}40`,
                 color: runningJobs.stirring ? th.danger : th.success,
-              }} >{runningJobs.stirring ? "● Running" : "▶ Start"}</button>
+              }} >{runningJobs.stirring ? "■ Stop Stirring" : "▶ Start"}</button>
               {runningJobs.stirring && (
-                <>
-                  <button onClick={() => {
+                <button onClick={() => {
                     if (!experiment) return;
                     const expEnc = encodeURIComponent(experiment.experiment);
                     reactors.filter(r => r.status === "online").forEach(r => {
@@ -3104,14 +3106,6 @@ export default function App() {
                     padding: "5px 10px", borderRadius: 6, fontSize: 12, fontWeight: 700, fontFamily: "inherit",
                     background: th.accentLight, border: `1px solid ${th.accent}40`, color: th.accent, cursor: "pointer",
                   }}>Set RPM</button>
-                  <button onClick={() => {
-                    handleStopJob("stirring");
-                    setRunningJobs(prev => ({ ...prev, stirring: false }));
-                  }} style={{
-                    padding: "5px 10px", borderRadius: 6, fontSize: 12, fontWeight: 700, fontFamily: "inherit",
-                    background: th.dangerBg, border: `1px solid ${th.danger}40`, color: th.danger, cursor: "pointer",
-                  }}>■ Stop</button>
-                </>
               )}
 
               <div style={{ width: 1, height: 24, background: th.border, margin: "0 6px" }} />
@@ -3120,12 +3114,8 @@ export default function App() {
               <span style={{ fontSize: 13, fontWeight: 700, color: th.textMuted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Readings</span>
               <button onClick={async () => {
                 await handleStartJob("stirring", { target_rpm: targetRpm });
-                setRunningJobs(prev => ({ ...prev, stirring: true }));
                 setTimeout(() => handleStartJob("od_reading"), 3000);
                 setTimeout(() => handleStartJob("growth_rate_calculating"), 6000);
-                setTimeout(() => {
-                  setRunningJobs(prev => ({ ...prev, od_reading: true, growth_rate_calculating: true }));
-                }, 7000);
               }} style={{
                 padding: "5px 14px", borderRadius: 6, fontSize: 13, fontWeight: 700, fontFamily: "inherit",
                 background: `${th.success}15`, border: `1px solid ${th.success}40`, color: th.success, cursor: "pointer",
@@ -3134,7 +3124,7 @@ export default function App() {
                 await handleStopJob("od_reading");
                 await handleStopJob("growth_rate_calculating");
                 await handleStopJob("stirring");
-                setRunningJobs(prev => ({ ...prev, od_reading: false, growth_rate_calculating: false, stirring: false }));
+                await handleStopJob("dosing_automation");
               }} style={{
                 padding: "5px 14px", borderRadius: 6, fontSize: 13, fontWeight: 700, fontFamily: "inherit",
                 background: th.dangerBg, border: `1px solid ${th.danger}40`, color: th.danger, cursor: "pointer",
