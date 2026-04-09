@@ -2296,16 +2296,16 @@ export default function App() {
     const opts = {};
     if (pumpMode === "chemostat") {
       opts.automation_name = "chemostat";
-      opts.volume = parseFloat(pumpVolume);
+      opts.exchange_volume_ml = parseFloat(pumpVolume);
       opts.duration = parseFloat(pumpDuration);
     } else if (pumpMode === "turbidostat") {
       opts.automation_name = "turbidostat";
-      opts.target_od = parseFloat(pumpTargetOD);
-      opts.volume = parseFloat(pumpVolume);
+      opts.target_normalized_od = parseFloat(pumpTargetOD);
+      opts.exchange_volume_ml = parseFloat(pumpVolume);
       opts.duration = parseFloat(pumpDuration);
     }
     addPumpLogEntry(
-      `Starting ${pumpMode}: vol=${opts.volume}mL, dur=${opts.duration}min${opts.target_od ? `, OD=${opts.target_od}` : ""}`,
+      `Starting ${pumpMode}: vol=${opts.exchange_volume_ml}mL, dur=${opts.duration}min${opts.target_normalized_od ? `, OD=${opts.target_normalized_od}` : ""}`,
     );
     if (experiment && connected) {
       await startJob("dosing_automation", opts);
