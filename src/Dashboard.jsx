@@ -3007,7 +3007,30 @@ export default function App() {
               {nav.find((n) => n.id === page)?.label || "Overview"}
             </h1>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <select
+              value={experiment?.experiment || ""}
+              onChange={(e) => selectExperiment(e.target.value)}
+              style={{
+                padding: "5px 10px",
+                borderRadius: 7,
+                border: `1px solid ${th.border}`,
+                background: th.bgAlt,
+                color: th.text,
+                fontSize: 13,
+                fontWeight: 600,
+                fontFamily: "inherit",
+                cursor: "pointer",
+                maxWidth: 200,
+                outline: "none",
+              }}
+            >
+              {allExperiments.map((exp) => (
+                <option key={exp.experiment} value={exp.experiment}>
+                  {exp.experiment}
+                </option>
+              ))}
+            </select>
             {loading && (
               <div
                 style={{
