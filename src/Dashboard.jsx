@@ -2294,12 +2294,8 @@ export default function App() {
   const ensureWasteMultiplier = async () => {
     try {
       const res = await pioFetch(buildApiUrl("/api/configs/config.ini"));
-      if (!res.ok) {
-        addPumpLogEntry(`Config fetch failed: ${res.status}`);
-        return false;
-      }
+      if (!res.ok) return false;
       const ini = await res.text();
-      addPumpLogEntry(`Config fetched: ${ini.length} chars, starts with "${ini.slice(0, 40).replace(/\n/g, "\\n")}"`);
       const section = "[dosing_automation.config]";
       const key = "waste_removal_multiplier";
       if (!ini.includes(section)) {
@@ -2317,13 +2313,11 @@ export default function App() {
         if (inSection && line.trim().startsWith(key)) {
           found = true;
           const currentVal = line.split("=")[1]?.trim();
-          addPumpLogEntry(`Found ${key}="${currentVal}" (raw: "${line.trim()}")`);
           if (currentVal === "1") { alreadyCorrect = true; return line; }
           return `${key}=1`;
         }
         return line;
       });
-      addPumpLogEntry(`Config parse: section found=${ini.includes(section)}, key found=${found}, alreadyCorrect=${alreadyCorrect}`);
       if (!found || alreadyCorrect) return true;
       addPumpLogEntry("Setting waste_removal_multiplier=1 in Pioreactor config...");
       const patchRes = await pioFetch(buildApiUrl("/api/configs/config.ini"), {
