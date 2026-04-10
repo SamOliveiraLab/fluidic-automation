@@ -2317,11 +2317,13 @@ export default function App() {
         if (inSection && line.trim().startsWith(key)) {
           found = true;
           const currentVal = line.split("=")[1]?.trim();
+          addPumpLogEntry(`Found ${key}="${currentVal}" (raw: "${line.trim()}")`);
           if (currentVal === "1") { alreadyCorrect = true; return line; }
           return `${key}=1`;
         }
         return line;
       });
+      addPumpLogEntry(`Config parse: section found=${ini.includes(section)}, key found=${found}, alreadyCorrect=${alreadyCorrect}`);
       if (!found || alreadyCorrect) return true;
       addPumpLogEntry("Setting waste_removal_multiplier=1 in Pioreactor config...");
       const patchRes = await pioFetch(buildApiUrl("/api/configs/config.ini"), {
