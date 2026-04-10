@@ -2294,8 +2294,12 @@ export default function App() {
   const ensureWasteMultiplier = async () => {
     try {
       const res = await pioFetch(buildApiUrl("/api/configs/config.ini"));
-      if (!res.ok) return false;
+      if (!res.ok) {
+        addPumpLogEntry(`Config fetch failed: ${res.status}`);
+        return false;
+      }
       const ini = await res.text();
+      addPumpLogEntry(`Config fetched: ${ini.length} chars, starts with "${ini.slice(0, 40).replace(/\n/g, "\\n")}"`);
       const section = "[dosing_automation.config]";
       const key = "waste_removal_multiplier";
       if (!ini.includes(section)) {
@@ -2326,7 +2330,8 @@ export default function App() {
         body: JSON.stringify({ code: updated.join("\n") }),
       });
       if (!patchRes.ok) {
-        addPumpLogEntry(`Config update failed: ${patchRes.status}`);
+        const errText = await patchRes.text();
+        addPumpLogEntry(`Config update failed: ${patchRes.status} — ${errText.slice(0, 200)}`);
         return false;
       }
       addPumpLogEntry("Config updated — waste multiplier set to 1:1");
