@@ -12,3 +12,11 @@ venv/
 .env
 .idea/
 *.db
+
+# macOS junk
+.DS_Store
+._*
+.AppleDouble
+.LSOverride
+.Spotlight-V100
+.Trashes
