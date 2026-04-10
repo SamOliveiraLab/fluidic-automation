@@ -2234,6 +2234,7 @@ export default function App() {
   const [pumpVolume, setPumpVolume] = useState("1.0");
   const [pumpDuration, setPumpDuration] = useState("60");
   const [pumpTargetOD, setPumpTargetOD] = useState("1.0");
+  const [wasteMultiplier, setWasteMultiplier] = useState("1.0");
   const [pumpRunning, setPumpRunning] = useState(false);
   const [pumpLog, setPumpLog] = useState([]);
   const [manualPump, setManualPump] = useState("media"); // media, waste, alt_media
@@ -2298,11 +2299,13 @@ export default function App() {
       opts.automation_name = "chemostat";
       opts.exchange_volume_ml = parseFloat(pumpVolume);
       opts.duration = parseFloat(pumpDuration);
+      opts.waste_removal_multiplier = parseFloat(wasteMultiplier);
     } else if (pumpMode === "turbidostat") {
       opts.automation_name = "turbidostat";
       opts.target_normalized_od = parseFloat(pumpTargetOD);
       opts.exchange_volume_ml = parseFloat(pumpVolume);
       opts.duration = parseFloat(pumpDuration);
+      opts.waste_removal_multiplier = parseFloat(wasteMultiplier);
     }
     addPumpLogEntry(
       `Starting ${pumpMode}: vol=${opts.exchange_volume_ml}mL, dur=${opts.duration}min${opts.target_normalized_od ? `, OD=${opts.target_normalized_od}` : ""}`,
@@ -3991,9 +3994,44 @@ export default function App() {
                         fontSize: 16,
                         fontFamily: "'JetBrains Mono',monospace",
                         outline: "none",
-                        marginBottom: 18,
+                        marginBottom: 14,
                       }}
                     />
+                    <label
+                      style={{
+                        fontSize: 14,
+                        fontWeight: 600,
+                        color: th.textSecondary,
+                        display: "block",
+                        marginBottom: 6,
+                      }}
+                    >
+                      Waste Removal Multiplier
+                    </label>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18 }}>
+                      <input
+                        value={wasteMultiplier}
+                        onChange={(e) => setWasteMultiplier(e.target.value)}
+                        type="number"
+                        step="0.1"
+                        min="0.1"
+                        max="5"
+                        style={{
+                          flex: 1,
+                          padding: "10px 14px",
+                          borderRadius: 8,
+                          border: `1px solid ${th.border}`,
+                          background: th.bgAlt,
+                          color: th.text,
+                          fontSize: 16,
+                          fontFamily: "'JetBrains Mono',monospace",
+                          outline: "none",
+                        }}
+                      />
+                      <span style={{ fontSize: 13, color: th.textMuted, minWidth: 90 }}>
+                        = {(parseFloat(pumpVolume || 0) * parseFloat(wasteMultiplier || 1)).toFixed(1)} mL out
+                      </span>
+                    </div>
                     <div style={{ display: "flex", gap: 10 }}>
                       <button
                         onClick={handleStartDosing}
