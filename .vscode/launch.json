@@ -1,0 +1,18 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "EnvironNets Desktop",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "environnets",
+      "cwd": "${workspaceFolder}",
+      "python": "${workspaceFolder}/venv/bin/python",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}"
+      },
+      "justMyCode": true,
+      "console": "integratedTerminal"
+    }
+  ]
+}

@@ -11,5 +11,4 @@ venv/
 *.so
 .env
 .idea/
-.vscode/
 *.db
