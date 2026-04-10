@@ -2291,6 +2291,52 @@ export default function App() {
     setTimeout(refresh, 3000);
   };
 
+  const ensureWasteMultiplier = async () => {
+    try {
+      const res = await pioFetch(buildApiUrl("/api/configs/config.ini"));
+      if (!res.ok) return false;
+      const ini = await res.text();
+      const section = "[dosing_automation.config]";
+      const key = "waste_removal_multiplier";
+      if (!ini.includes(section)) {
+        addPumpLogEntry("Config: dosing_automation.config section not found, skipping");
+        return true;
+      }
+      const lines = ini.split("\n");
+      let inSection = false;
+      let found = false;
+      let alreadyCorrect = false;
+      const updated = lines.map((line) => {
+        if (line.trim().startsWith("[")) {
+          inSection = line.trim() === section;
+        }
+        if (inSection && line.trim().startsWith(key)) {
+          found = true;
+          const currentVal = line.split("=")[1]?.trim();
+          if (currentVal === "1") { alreadyCorrect = true; return line; }
+          return `${key}=1`;
+        }
+        return line;
+      });
+      if (!found || alreadyCorrect) return true;
+      addPumpLogEntry("Setting waste_removal_multiplier=1 in Pioreactor config...");
+      const patchRes = await pioFetch(buildApiUrl("/api/configs/config.ini"), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: updated.join("\n") }),
+      });
+      if (!patchRes.ok) {
+        addPumpLogEntry(`Config update failed: ${patchRes.status}`);
+        return false;
+      }
+      addPumpLogEntry("Config updated — waste multiplier set to 1:1");
+      return true;
+    } catch (e) {
+      addPumpLogEntry(`Config update error: ${e.message}`);
+      return false;
+    }
+  };
+
   const handleStartDosing = async () => {
     setPumpRunning(true);
     const opts = {};
@@ -2298,18 +2344,17 @@ export default function App() {
       opts.automation_name = "chemostat";
       opts.exchange_volume_ml = parseFloat(pumpVolume);
       opts.duration = parseFloat(pumpDuration);
-      opts.waste_removal_multiplier = 1;
     } else if (pumpMode === "turbidostat") {
       opts.automation_name = "turbidostat";
       opts.target_normalized_od = parseFloat(pumpTargetOD);
       opts.exchange_volume_ml = parseFloat(pumpVolume);
       opts.duration = parseFloat(pumpDuration);
-      opts.waste_removal_multiplier = 1;
     }
     addPumpLogEntry(
       `Starting ${pumpMode}: vol=${opts.exchange_volume_ml}mL, dur=${opts.duration}min${opts.target_normalized_od ? `, OD=${opts.target_normalized_od}` : ""}`,
     );
     if (experiment && connected) {
+      await ensureWasteMultiplier();
       await startJob("dosing_automation", opts);
       addPumpLogEntry(`${pumpMode} started on all online reactors`);
     } else {
