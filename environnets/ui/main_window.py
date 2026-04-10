@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
 )
 
 from environnets.core import PioAPI
+from environnets.core.config import get
 from environnets.core.models import Store, Network, Unit, Connection
 from environnets.ui.theme import (
     STYLESHEET, ACCENT, GREEN, RED, TEXT_SECONDARY,
@@ -31,13 +32,12 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("EnvironNets")
-        self.setMinimumSize(1100, 700)
-        self.resize(1400, 850)
         self.setStyleSheet(STYLESHEET)
 
         # Core state
         self.store = Store()
-        self.api = PioAPI(self.store.get_setting("pioreactor_url", "http://localhost"))
+        default_url = get("connection", "default_url", "http://localhost")
+        self.api = PioAPI(self.store.get_setting("pioreactor_url", default_url))
         self.connected = False
         self.current_network: Network | None = None
 
@@ -45,9 +45,10 @@ class MainWindow(QMainWindow):
         self._load_networks()
 
         # Connection check timer
+        poll_ms = get("connection", "poll_interval_seconds", 10) * 1000
         self._conn_timer = QTimer(self)
         self._conn_timer.timeout.connect(self._check_connection)
-        self._conn_timer.start(10_000)
+        self._conn_timer.start(poll_ms)
         self._check_connection()
 
     # -- UI construction ---------------------------------------------------

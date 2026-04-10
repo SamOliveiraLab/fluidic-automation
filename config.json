@@ -1,0 +1,28 @@
+{
+  "app": {
+    "name": "EnvironNets",
+    "version": "0.1.0",
+    "entry": "environnets.__main__:main"
+  },
+  "connection": {
+    "default_url": "https://api.environnets.com",
+    "timeout_seconds": 8,
+    "poll_interval_seconds": 10
+  },
+  "ui": {
+    "window_width": 1400,
+    "window_height": 850,
+    "min_width": 1100,
+    "min_height": 700,
+    "theme": "dark"
+  },
+  "canvas": {
+    "grid_size": 20,
+    "snap_to_grid": true
+  },
+  "build": {
+    "python": "python3",
+    "venv_dir": "venv",
+    "platform": "auto"
+  }
+}
