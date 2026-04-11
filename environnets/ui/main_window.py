@@ -49,6 +49,10 @@ class MainWindow(QMainWindow):
         self._conn_timer = QTimer(self)
         self._conn_timer.timeout.connect(self._check_connection)
         self._conn_timer.start(poll_ms)
+
+        self._ping_timer = QTimer(self)
+        self._ping_timer.timeout.connect(self._ping_linked_units)
+        self._ping_timer.start(8000)
         self._check_connection()
 
     # -- UI construction ---------------------------------------------------
@@ -269,9 +273,31 @@ class MainWindow(QMainWindow):
             workers = self.api.get_workers()
             active = [w for w in workers if w.get("is_active")]
             self._conn_label.setText(f"Connected \u00b7 {len(active)} worker(s) active")
-            self._conn_btn.setText(f"Connected ({self.store.get_setting('pioreactor_url', '')})")
+            url = self.store.get_setting("pioreactor_url", "")
+            short = url.replace("https://","").replace("http://","")[:22]
+            self._conn_btn.setText(f"✓ {short}")
         else:
             self._conn_dot.setStyleSheet(f"color: {RED}; font-size: 14px;")
             self._conn_dot.setText(dot)
             self._conn_label.setText("Not connected")
             self._conn_btn.setText("Configure connection")
+
+
+    def _ping_linked_units(self):
+        if not self.connected or not self.current_network:
+            return
+        reachable = {w["pioreactor_unit"] for w in (self.api.get_workers() or []) if w.get("is_active")}
+        changed = False
+        for u in self.current_network.units:
+            if not u.pioreactor_unit:
+                if u.status != "disconnected":
+                    u.status = "disconnected"; changed = True
+                continue
+            if u.pioreactor_unit in reachable:
+                if u.status == "disconnected":
+                    u.status = "idle"; changed = True
+            else:
+                if u.status != "disconnected":
+                    u.status = "disconnected"; changed = True
+        if changed:
+            self.store.save_network(self.current_network)

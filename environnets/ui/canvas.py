@@ -295,11 +295,14 @@ class NetworkCanvas(QWidget):
         self._cw.update()
 
     def open_unit_detail(self, unit):
-        QMessageBox.information(
-            self, "Unit detail",
-            f"{unit.label}\nType: {unit.type_id}\nStatus: {unit.status}\n\n"
-            "Detail view coming in Phase 4."
-        )
+        if not unit.pioreactor_unit:
+            QMessageBox.information(self, "Not linked",
+                "Right-click > Link to hardware first.")
+            return
+        from environnets.ui.unit_detail import UnitDetailDialog
+        exp_name = getattr(self, "current_experiment_name", "Demo experiment")
+        dlg = UnitDetailDialog(self.api, exp_name, unit, self)
+        dlg.exec()
 
     def link_hardware(self, unit):
         workers = self.api.get_workers() or []

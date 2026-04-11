@@ -110,9 +110,33 @@ class ExperimentPanel(QWidget):
 
         # Canvas
         self.canvas = NetworkCanvas(api, store)
+        self.canvas.current_experiment_name = experiment.name
         if network:
             self.canvas.load_network(network)
         root.addWidget(self.canvas, 1)
+
+        self._od_timer = QTimer(self)
+        self._od_timer.timeout.connect(self._poll_telemetry)
+        self._od_timer.start(10000)
+
+    def _poll_telemetry(self):
+        if not self.canvas.network:
+            return
+        try:
+            od = self.api.get_od_readings(self.experiment.name)
+            if not od or not od.get("series"):
+                return
+            latest = {}
+            for idx, name in enumerate(od["series"]):
+                unit_name = name.rsplit("-", 1)[0]
+                data = od["data"][idx] if idx < len(od["data"]) else []
+                if data:
+                    latest[unit_name] = data[-1].get("y", 0.0)
+            for u in self.canvas.network.units:
+                if u.pioreactor_unit and u.pioreactor_unit in latest:
+                    u.last_od = float(latest[u.pioreactor_unit])
+        except Exception:
+            pass
 
     def _toggle_experiment(self):
         if self.experiment.status != "running":

@@ -36,6 +36,9 @@ class Unit:
     config: dict = field(default_factory=dict)
     category: str = "reactor"
     type_id: str = "pio_20ml"
+    last_od: float = 0.0
+    last_temp: float = 0.0
+    last_gr: float = 0.0
 
 
 @dataclass

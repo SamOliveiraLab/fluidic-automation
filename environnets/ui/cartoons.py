@@ -67,10 +67,20 @@ def draw_pio_vial(p: QPainter, x: float, y: float, w: float, h: float, unit, pha
     p.setPen(Qt.PenStyle.NoPen)
     p.drawRoundedRect(liquid_rect, 2, 2)
 
-    # Cells floating (driven by fake count, real OD later)
+    # Cells floating (driven by real OD stored on unit)
     if unit.status in ("running", "idle"):
+        od = getattr(unit, "last_od", 0.0) or 0.0
+        if od < 0.05:
+            cell_count = 0
+        elif od < 0.3:
+            cell_count = 3
+        elif od < 0.8:
+            cell_count = 10
+        elif od < 1.5:
+            cell_count = 20
+        else:
+            cell_count = 35
         p.setBrush(QBrush(CELL))
-        cell_count = 8 if unit.status == "running" else 3
         for i in range(cell_count):
             cx = vial_x + 4 + ((i * 7 + phase * 20) % (vial_w - 8))
             cy = liquid_top + 6 + ((i * 11 + phase * 15) % (liquid_h - 12))
