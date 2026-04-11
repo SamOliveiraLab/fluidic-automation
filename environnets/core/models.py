@@ -26,14 +26,16 @@ def _ensure_dir():
 @dataclass
 class Unit:
     """A single piece of hardware on the canvas."""
-    uid: str                    # unique id within the network (e.g. "unit-1")
-    kind: str                   # "bioreactor", "media_pump", "waste_pump", "sensor"
-    label: str = ""             # user-facing name (e.g. "E. coli WT")
-    pioreactor_unit: str = ""   # hostname on the Pi (e.g. "oliveirapioreactor01")
-    x: float = 100.0           # canvas x position
-    y: float = 100.0           # canvas y position
-    status: str = "disconnected"  # "disconnected", "idle", "running"
-    config: dict = field(default_factory=dict)  # extra config (pwm channel, etc.)
+    uid: str
+    kind: str
+    label: str = ""
+    pioreactor_unit: str = ""
+    x: float = 100.0
+    y: float = 100.0
+    status: str = "disconnected"
+    config: dict = field(default_factory=dict)
+    category: str = "reactor"
+    type_id: str = "pio_20ml"
 
 
 @dataclass
