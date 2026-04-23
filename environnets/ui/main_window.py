@@ -20,11 +20,17 @@ from PyQt6.QtWidgets import (
 from environnets.core import PioAPI
 from environnets.core.config import get
 from environnets.core.models import Store, Network, Unit, Connection
+from environnets.core.experiments import (
+    Experiment, save_experiment, list_experiments,
+    load_experiment, delete_experiment,
+)
 from environnets.ui.theme import (
-    STYLESHEET, ACCENT, GREEN, RED, TEXT_SECONDARY,
-    TEXT_MUTED, BG_CARD, BG_PANEL, BORDER,
+    STYLESHEET, ACCENT, ACCENT_DIM, GREEN, RED, TEXT_PRIMARY,
+    TEXT_SECONDARY, TEXT_MUTED, BG_CARD, BG_PANEL, BG_HOVER,
+    BORDER, BORDER_HOVER,
 )
 from environnets.ui.canvas import NetworkCanvas
+from environnets.ui.experiment_panel import ExperimentPanel
 from environnets.ui.connection_dialog import ConnectionDialog
 
 
@@ -93,11 +99,11 @@ class MainWindow(QMainWindow):
 
         # App title
         title = QLabel("EnvironNets")
-        title.setStyleSheet(f"font-size: 20px; font-weight: 600; color: {ACCENT}; margin-bottom: 4px;")
+        title.setStyleSheet(f"font-size: 18px; font-weight: 600; color: {TEXT_PRIMARY}; margin-bottom: 2px; letter-spacing: 0.5px;")
         layout.addWidget(title)
 
         subtitle = QLabel("Bioreactor networks")
-        subtitle.setStyleSheet(f"font-size: 12px; color: {TEXT_SECONDARY}; margin-bottom: 12px;")
+        subtitle.setStyleSheet(f"font-size: 11px; color: {TEXT_MUTED}; margin-bottom: 12px;")
         layout.addWidget(subtitle)
 
         # Connection button
@@ -116,17 +122,18 @@ class MainWindow(QMainWindow):
         net_label = QLabel("Networks")
         net_label.setStyleSheet("font-size: 14px; font-weight: 500;")
         net_add_btn = QPushButton("+")
-        net_add_btn.setFixedSize(28, 28)
+        net_add_btn.setFixedSize(26, 26)
         net_add_btn.setStyleSheet(f"""
             QPushButton {{
-                background-color: {ACCENT};
-                color: #1a1a2e;
-                border: none;
-                border-radius: 14px;
-                font-size: 16px;
-                font-weight: 600;
+                background-color: transparent;
+                color: {TEXT_MUTED};
+                border: 1px solid {BORDER};
+                border-radius: 6px;
+                font-size: 15px;
+                font-weight: 500;
+                padding: 0;
             }}
-            QPushButton:hover {{ background-color: #00eabb; }}
+            QPushButton:hover {{ color: {TEXT_PRIMARY}; border-color: {BORDER_HOVER}; background: {BG_HOVER}; }}
         """)
         net_add_btn.clicked.connect(self._create_network_dialog)
         net_header.addWidget(net_label)
@@ -146,6 +153,46 @@ class MainWindow(QMainWindow):
         self._del_net_btn.clicked.connect(self._delete_selected_network)
         layout.addWidget(self._del_net_btn)
 
+        # Separator before experiments
+        sep2 = QFrame()
+        sep2.setFrameShape(QFrame.Shape.HLine)
+        sep2.setStyleSheet(f"color: {BORDER};")
+        layout.addWidget(sep2)
+
+        # Experiments section
+        exp_header = QHBoxLayout()
+        exp_label = QLabel("Experiments")
+        exp_label.setStyleSheet("font-size: 14px; font-weight: 500;")
+        exp_add_btn = QPushButton("+")
+        exp_add_btn.setFixedSize(26, 26)
+        exp_add_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                color: {TEXT_MUTED};
+                border: 1px solid {BORDER};
+                border-radius: 6px;
+                font-size: 15px;
+                font-weight: 500;
+                padding: 0;
+            }}
+            QPushButton:hover {{ color: {TEXT_PRIMARY}; border-color: {BORDER_HOVER}; background: {BG_HOVER}; }}
+        """)
+        exp_add_btn.clicked.connect(self._create_experiment_dialog)
+        exp_header.addWidget(exp_label)
+        exp_header.addStretch()
+        exp_header.addWidget(exp_add_btn)
+        layout.addLayout(exp_header)
+
+        self.experiment_list = QListWidget()
+        self.experiment_list.itemClicked.connect(self._on_experiment_selected)
+        layout.addWidget(self.experiment_list, 1)
+
+        self._del_exp_btn = QPushButton("Delete selected experiment")
+        self._del_exp_btn.setProperty("class", "danger")
+        self._del_exp_btn.setVisible(False)
+        self._del_exp_btn.clicked.connect(self._delete_selected_experiment)
+        layout.addWidget(self._del_exp_btn)
+
         return frame
 
     def _build_welcome_page(self):
@@ -154,7 +201,7 @@ class MainWindow(QMainWindow):
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         icon_label = QLabel()
-        icon_label.setStyleSheet(f"font-size: 48px; color: {ACCENT};")
+        icon_label.setStyleSheet(f"font-size: 48px; color: {TEXT_MUTED};")
         icon_label.setText("\u2B21")  # hexagon
         icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(icon_label)
@@ -193,6 +240,7 @@ class MainWindow(QMainWindow):
             self.content_stack.setCurrentIndex(1)
             self._del_net_btn.setVisible(True)
             self.setWindowTitle(f"EnvironNets \u2014 {net.name}")
+            self._load_experiments(net_id)
 
     def _create_network_dialog(self):
         dlg = QDialog(self)
@@ -249,6 +297,99 @@ class MainWindow(QMainWindow):
             self.content_stack.setCurrentIndex(0)
             self.setWindowTitle("EnvironNets")
 
+    # -- experiments -------------------------------------------------------
+
+    def _load_experiments(self, network_id: str = ""):
+        self.experiment_list.clear()
+        self._del_exp_btn.setVisible(False)
+        nid = network_id or (self.current_network.network_id if self.current_network else "")
+        if not nid:
+            return
+        for exp in list_experiments(self.store):
+            if exp.get("network_id") == nid:
+                status = exp.get("status", "draft")
+                prefix = {"running": "\u25B6 ", "stopped": "\u25A0 "}.get(status, "")
+                item = QListWidgetItem(f"{prefix}{exp['name']}")
+                item.setData(Qt.ItemDataRole.UserRole, exp["exp_id"])
+                self.experiment_list.addItem(item)
+
+    def _on_experiment_selected(self, item: QListWidgetItem):
+        exp_id = item.data(Qt.ItemDataRole.UserRole)
+        exp = load_experiment(self.store, exp_id)
+        if not exp or not self.current_network:
+            return
+        self._del_exp_btn.setVisible(True)
+        panel = ExperimentPanel(self.api, self.store, exp, self.current_network)
+        # Replace any previous experiment panel (index 2+)
+        while self.content_stack.count() > 2:
+            w = self.content_stack.widget(2)
+            self.content_stack.removeWidget(w)
+            w.deleteLater()
+        self.content_stack.addWidget(panel)
+        self.content_stack.setCurrentWidget(panel)
+        self.setWindowTitle(f"EnvironNets \u2014 {self.current_network.name} \u2014 {exp.name}")
+
+    def _create_experiment_dialog(self):
+        if not self.current_network:
+            QMessageBox.information(self, "No network", "Select a network first, then create an experiment.")
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle("New experiment")
+        dlg.setMinimumWidth(360)
+        form = QFormLayout(dlg)
+
+        name_input = QLineEdit()
+        name_input.setPlaceholderText("e.g. Chemostat run 1")
+        desc_input = QLineEdit()
+        desc_input.setPlaceholderText("Optional description")
+
+        form.addRow("Name:", name_input)
+        form.addRow("Description:", desc_input)
+
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        form.addWidget(btns)
+
+        if dlg.exec() == QDialog.DialogCode.Accepted and name_input.text().strip():
+            exp = Experiment(
+                exp_id=str(uuid.uuid4())[:8],
+                name=name_input.text().strip(),
+                description=desc_input.text().strip(),
+                network_id=self.current_network.network_id,
+            )
+            save_experiment(self.store, exp)
+            self._load_experiments()
+            # Auto-select the new experiment
+            for i in range(self.experiment_list.count()):
+                it = self.experiment_list.item(i)
+                if it.data(Qt.ItemDataRole.UserRole) == exp.exp_id:
+                    self.experiment_list.setCurrentItem(it)
+                    self._on_experiment_selected(it)
+                    break
+
+    def _delete_selected_experiment(self):
+        item = self.experiment_list.currentItem()
+        if not item:
+            return
+        exp_id = item.data(Qt.ItemDataRole.UserRole)
+        reply = QMessageBox.question(
+            self, "Delete experiment",
+            f"Delete experiment \"{item.text()}\"?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            delete_experiment(self.store, exp_id)
+            self._del_exp_btn.setVisible(False)
+            self._load_experiments()
+            if self.content_stack.count() > 2:
+                w = self.content_stack.widget(2)
+                self.content_stack.removeWidget(w)
+                w.deleteLater()
+            self.content_stack.setCurrentIndex(1)
+
     # -- connection --------------------------------------------------------
 
     def _open_connection_dialog(self):
@@ -261,23 +402,27 @@ class MainWindow(QMainWindow):
             self.store.set_setting("pioreactor_url", url)
             self.api = PioAPI(url)
             self.canvas.api = self.api
+            current = self.content_stack.currentWidget()
+            if isinstance(current, ExperimentPanel):
+                current.api = self.api
+                current.canvas.api = self.api
             self._check_connection()
 
     def _check_connection(self):
         ok = self.api.ping()
         self.connected = ok
-        dot = f"\u25CF"
+        dot = "\u25CF"
         if ok:
-            self._conn_dot.setStyleSheet(f"color: {GREEN}; font-size: 14px;")
+            self._conn_dot.setStyleSheet(f"color: {GREEN}; font-size: 10px;")
             self._conn_dot.setText(dot)
             workers = self.api.get_workers()
             active = [w for w in workers if w.get("is_active")]
-            self._conn_label.setText(f"Connected \u00b7 {len(active)} worker(s) active")
+            self._conn_label.setText(f"Connected \u00b7 {len(active)} worker(s)")
             url = self.store.get_setting("pioreactor_url", "")
-            short = url.replace("https://","").replace("http://","")[:22]
-            self._conn_btn.setText(f"✓ {short}")
+            short = url.replace("https://", "").replace("http://", "")[:24]
+            self._conn_btn.setText(short)
         else:
-            self._conn_dot.setStyleSheet(f"color: {RED}; font-size: 14px;")
+            self._conn_dot.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 10px;")
             self._conn_dot.setText(dot)
             self._conn_label.setText("Not connected")
             self._conn_btn.setText("Configure connection")
@@ -301,3 +446,8 @@ class MainWindow(QMainWindow):
                     u.status = "disconnected"; changed = True
         if changed:
             self.store.save_network(self.current_network)
+        # Also propagate the api reference to any active ExperimentPanel
+        current = self.content_stack.currentWidget()
+        if isinstance(current, ExperimentPanel):
+            current.api = self.api
+            current.canvas.api = self.api

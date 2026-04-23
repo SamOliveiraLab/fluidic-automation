@@ -10,20 +10,20 @@ import math
 from PyQt6.QtCore import QRectF, QPointF, Qt
 from PyQt6.QtGui import QPainter, QPen, QBrush, QColor, QPainterPath, QLinearGradient, QFont
 
-GLASS = QColor(180, 220, 240, 60)
-LIQUID = QColor(80, 180, 200, 140)
-METAL = QColor(140, 150, 170)
-METAL_DARK = QColor(60, 70, 90)
-BODY = QColor(40, 50, 70)
-TUBE = QColor(200, 210, 220, 180)
-CELL = QColor(100, 220, 140, 220)
-ACCENT = QColor(0, 212, 170)
-WARNING = QColor(240, 160, 48)
+GLASS = QColor(160, 185, 210, 50)
+LIQUID = QColor(70, 140, 170, 130)
+METAL = QColor(120, 128, 145)
+METAL_DARK = QColor(50, 55, 70)
+BODY = QColor(35, 38, 50)
+TUBE = QColor(170, 178, 195, 160)
+CELL = QColor(110, 185, 140, 200)
+ACCENT_C = QColor(107, 138, 253)
+WARNING = QColor(184, 149, 64)
 
 
-def _text(p: QPainter, x: float, y: float, w: float, text: str, size: int = 10, color=QColor(220, 225, 235)):
+def _text(p: QPainter, x: float, y: float, w: float, text: str, size: int = 10, color=QColor(200, 200, 210)):
     p.setPen(QPen(color))
-    f = QFont("Segoe UI", size, QFont.Weight.Medium)
+    f = QFont("Inter", size, QFont.Weight.Medium)
     p.setFont(f)
     p.drawText(QRectF(x, y, w, 18), Qt.AlignmentFlag.AlignCenter, text)
 
@@ -43,7 +43,7 @@ def draw_pio_vial(p: QPainter, x: float, y: float, w: float, h: float, unit, pha
 
     # Little LED dot on housing
     led_r = 2.5
-    led_color = ACCENT if unit.status == "running" else QColor(80, 100, 130)
+    led_color = ACCENT_C if unit.status == "running" else QColor(60, 68, 85)
     p.setBrush(QBrush(led_color))
     p.setPen(Qt.PenStyle.NoPen)
     p.drawEllipse(QPointF(x + w * 0.22, y + h * 0.45), led_r, led_r)
@@ -280,7 +280,7 @@ def draw_custom_pump(p: QPainter, x: float, y: float, w: float, h: float, unit, 
     p.setPen(QPen(METAL_DARK, 1.5))
     p.drawRoundedRect(body, 6, 6)
     # Arrow showing flow
-    p.setPen(QPen(ACCENT, 2.5))
+    p.setPen(QPen(ACCENT_C, 2.5))
     cy = y + h * 0.45
     p.drawLine(QPointF(x + 20, cy), QPointF(x + w - 20, cy))
     p.drawLine(QPointF(x + w - 24, cy - 4), QPointF(x + w - 20, cy))
@@ -290,7 +290,7 @@ def draw_custom_pump(p: QPainter, x: float, y: float, w: float, h: float, unit, 
 
 # -- SENSORS ---------------------------------------------------------------
 
-def draw_probe(p: QPainter, x: float, y: float, w: float, h: float, unit, phase: float, color=ACCENT):
+def draw_probe(p: QPainter, x: float, y: float, w: float, h: float, unit, phase: float, color=ACCENT_C):
     """Generic probe: body with display face and a dipstick."""
     # Body
     body = QRectF(x + w * 0.2, y + 10, w * 0.6, h * 0.45)
@@ -376,12 +376,12 @@ def draw_status_glow(painter: QPainter, unit, phase: float):
     tid = getattr(unit, "type_id", "pio_20ml")
     w, h = default_dims(cat, tid)
     status_color_map = {
-        "disconnected": QColor(231, 76, 60, 160),
-        "idle":         QColor(240, 160, 48, 160),
-        "running":      QColor(0, 212, 170, 200),
-        "connected":    QColor(0, 212, 170, 200),
+        "disconnected": QColor(160, 70, 70, 120),
+        "idle":         QColor(160, 130, 55, 120),
+        "running":      QColor(80, 130, 180, 160),
+        "connected":    QColor(80, 130, 180, 160),
     }
-    color = status_color_map.get(unit.status, QColor(231, 76, 60, 160))
+    color = status_color_map.get(unit.status, QColor(160, 70, 70, 120))
     # Pulsing width for running state
     pulse_w = 3.0 + (1.5 * math.sin(phase * 2 * math.pi) if unit.status == "running" else 0)
     pen = QPen(color, pulse_w)

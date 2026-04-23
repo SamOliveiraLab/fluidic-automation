@@ -1,10 +1,12 @@
 """Network canvas with drag-and-drop and animated cartoons."""
 
+import copy
 import uuid
+from dataclasses import asdict
 from PyQt6.QtCore import Qt, QPointF, QRectF, QTimer, QMimeData, QSize
 from PyQt6.QtGui import (
     QPainter, QPen, QColor, QBrush, QFont, QPainterPath,
-    QMouseEvent, QDrag, QPixmap,
+    QMouseEvent, QDrag, QPixmap, QKeySequence, QShortcut,
 )
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -15,12 +17,14 @@ from environnets.core.models import Unit, Connection
 from environnets.core.unit_types import default_dims, list_types, get_type
 from environnets.ui.cartoons import draw_unit, draw_status_glow
 from environnets.ui.theme import (
-    ACCENT, TEXT_SECONDARY, TEXT_MUTED, BG_CARD, BG_DARK,
-    BG_PANEL, BG_INPUT, BORDER,
+    ACCENT, ACCENT_DIM, TEXT_SECONDARY, TEXT_MUTED, TEXT_PRIMARY,
+    BG_CARD, BG_DARK, BG_PANEL, BG_INPUT, BG_HOVER, BORDER, BORDER_HOVER,
 )
 
 
 class CanvasWidget(QWidget):
+    MAX_UNDO = 40
+
     def __init__(self, parent_canvas):
         super().__init__()
         self.parent_canvas = parent_canvas
@@ -28,14 +32,17 @@ class CanvasWidget(QWidget):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setMouseTracking(True)
         self.setAcceptDrops(True)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
         self._dragging_unit = None
         self._drag_offset = QPointF(0, 0)
         self._hover_unit = None
+        self._selected_unit = None
         self._connecting_from = None
         self._mouse_pos = QPointF(0, 0)
         self._phase = 0.0
         self._grid = 20
+        self._undo_stack: list[dict] = []
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
@@ -51,33 +58,43 @@ class CanvasWidget(QWidget):
 
     def paintEvent(self, e):
         p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.fillRect(self.rect(), QColor(BG_DARK))
+        try:
+            p.setRenderHint(QPainter.RenderHint.Antialiasing)
+            p.fillRect(self.rect(), QColor(BG_DARK))
 
-        p.setPen(QPen(QColor(BORDER), 1))
-        for x in range(0, self.width(), self._grid):
-            for y in range(0, self.height(), self._grid):
-                p.drawPoint(x, y)
+            p.setPen(QPen(QColor(BORDER), 1))
+            for x in range(0, self.width(), self._grid):
+                for y in range(0, self.height(), self._grid):
+                    p.drawPoint(x, y)
 
-        if not self.network:
-            p.setPen(QPen(QColor(TEXT_MUTED)))
-            p.setFont(QFont("Segoe UI", 14))
-            p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
-                       "Drag units from the palette\nto build your bioreactor network")
-            return
+            if not self.network:
+                p.setPen(QPen(QColor(TEXT_MUTED)))
+                p.setFont(QFont("Inter", 13))
+                p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
+                           "Drag units from the palette\nto build your bioreactor network")
+                return
 
-        for c in self.network.connections:
-            self._draw_tubing(p, c)
+            for c in self.network.connections:
+                self._draw_tubing(p, c)
 
-        if self._connecting_from:
-            u = self._connecting_from
-            w, h = default_dims(u.category, u.type_id)
-            p.setPen(QPen(QColor(ACCENT), 2, Qt.PenStyle.DashLine))
-            p.drawLine(QPointF(u.x + w / 2, u.y + h / 2), self._mouse_pos)
+            if self._connecting_from:
+                u = self._connecting_from
+                w, h = default_dims(u.category, u.type_id)
+                p.setPen(QPen(QColor(ACCENT_DIM), 2, Qt.PenStyle.DashLine))
+                p.drawLine(QPointF(u.x + w / 2, u.y + h / 2), self._mouse_pos)
 
-        for u in self.network.units:
-            draw_status_glow(p, u, self._phase)
-            draw_unit(p, u, self._phase)
+            for u in self.network.units:
+                draw_status_glow(p, u, self._phase)
+                draw_unit(p, u, self._phase)
+
+            if self._selected_unit and self._selected_unit in self.network.units:
+                su = self._selected_unit
+                sw, sh = default_dims(su.category, su.type_id)
+                p.setPen(QPen(QColor(ACCENT), 1.5, Qt.PenStyle.DashLine))
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                p.drawRoundedRect(QRectF(su.x - 6, su.y - 6, sw + 12, sh + 12), 8, 8)
+        finally:
+            p.end()
 
     def _draw_tubing(self, p, conn):
         src = next((u for u in self.network.units if u.uid == conn.source_uid), None)
@@ -95,15 +112,15 @@ class CanvasWidget(QWidget):
         path.cubicTo(mx, sy, mx, ty, tx, ty)
 
         p.setBrush(Qt.BrushStyle.NoBrush)
-        p.setPen(QPen(QColor(40, 50, 70), 7))
+        p.setPen(QPen(QColor(30, 30, 38), 7))
         p.drawPath(path)
-        p.setPen(QPen(QColor(180, 195, 215), 4))
+        p.setPen(QPen(QColor(100, 105, 120), 3))
         p.drawPath(path)
-        p.setPen(QPen(QColor(0, 212, 170, 120), 2))
+        p.setPen(QPen(QColor(140, 150, 170, 100), 1))
         p.drawPath(path)
 
         if src.status == "running" or tgt.status == "running":
-            p.setBrush(QBrush(QColor(100, 220, 200)))
+            p.setBrush(QBrush(QColor(140, 165, 210)))
             p.setPen(Qt.PenStyle.NoPen)
             for i in range(3):
                 t = (self._phase + i / 3) % 1.0
@@ -122,18 +139,28 @@ class CanvasWidget(QWidget):
     def mousePressEvent(self, e):
         pos = e.position()
         u = self._unit_at(pos)
-        if e.button() == Qt.MouseButton.LeftButton and u:
-            if self._connecting_from and u != self._connecting_from:
+        if e.button() == Qt.MouseButton.LeftButton:
+            if u and self._connecting_from and u != self._connecting_from:
+                self._push_undo()
                 self.network.connections.append(
                     Connection(source_uid=self._connecting_from.uid, target_uid=u.uid))
                 self._connecting_from = None
                 self.setCursor(Qt.CursorShape.ArrowCursor)
                 self._save()
                 return
-            self._dragging_unit = u
-            self._drag_offset = QPointF(pos.x() - u.x, pos.y() - u.y)
-        elif e.button() == Qt.MouseButton.RightButton and u:
-            self._show_menu(u, e.globalPosition().toPoint())
+            self._selected_unit = u
+            if u:
+                self._dragging_unit = u
+                self._drag_offset = QPointF(pos.x() - u.x, pos.y() - u.y)
+            elif self._connecting_from:
+                self._connecting_from = None
+                self.setCursor(Qt.CursorShape.ArrowCursor)
+        elif e.button() == Qt.MouseButton.RightButton:
+            if u:
+                self._selected_unit = u
+                self._show_menu(u, e.globalPosition().toPoint())
+            else:
+                self._show_canvas_menu(e.globalPosition().toPoint())
 
     def mouseMoveEvent(self, e):
         self._mouse_pos = e.position()
@@ -146,8 +173,14 @@ class CanvasWidget(QWidget):
     def mouseReleaseEvent(self, e):
         if self._dragging_unit:
             g = self._grid
-            self._dragging_unit.x = round(self._dragging_unit.x / g) * g
-            self._dragging_unit.y = round(self._dragging_unit.y / g) * g
+            new_x = round(self._dragging_unit.x / g) * g
+            new_y = round(self._dragging_unit.y / g) * g
+            old_x = self._drag_offset.x()
+            old_y = self._drag_offset.y()
+            if new_x != old_x or new_y != old_y:
+                self._push_undo()
+            self._dragging_unit.x = new_x
+            self._dragging_unit.y = new_y
             self._dragging_unit = None
             self._save()
 
@@ -156,36 +189,124 @@ class CanvasWidget(QWidget):
         if u:
             self.parent_canvas.open_unit_detail(u)
 
+    def _menu_style(self):
+        return (
+            f"QMenu{{background:{BG_CARD};border:1px solid {BORDER};border-radius:6px;padding:4px}}"
+            f"QMenu::item{{padding:6px 20px;border-radius:4px;color:{TEXT_SECONDARY}}}"
+            f"QMenu::item:selected{{background:{BG_HOVER};color:{TEXT_PRIMARY}}}"
+            f"QMenu::separator{{height:1px;background:{BORDER};margin:4px 8px}}"
+        )
+
     def _show_menu(self, u, pos):
         m = QMenu(self)
-        m.setStyleSheet(
-            f"QMenu{{background:{BG_CARD};border:1px solid {BORDER};border-radius:6px;padding:4px}}"
-            f"QMenu::item{{padding:6px 20px;border-radius:4px}}"
-            f"QMenu::item:selected{{background:{ACCENT};color:{BG_DARK}}}"
-        )
+        m.setStyleSheet(self._menu_style())
         a_link = m.addAction("Link to hardware...")
         a_conn = m.addAction("Connect to...")
         a_ren = m.addAction("Rename")
+
+        # Show removable connections for this unit
+        conn_actions = []
+        if self.network:
+            unit_conns = [c for c in self.network.connections
+                         if c.source_uid == u.uid or c.target_uid == u.uid]
+            if unit_conns:
+                m.addSeparator()
+                for c in unit_conns:
+                    other_uid = c.target_uid if c.source_uid == u.uid else c.source_uid
+                    other = next((x for x in self.network.units if x.uid == other_uid), None)
+                    other_label = other.label if other else "?"
+                    direction = "\u2192" if c.source_uid == u.uid else "\u2190"
+                    a = m.addAction(f"Disconnect {direction} {other_label}")
+                    conn_actions.append((a, c))
+
         m.addSeparator()
         a_del = m.addAction("Remove from canvas")
-        c = m.exec(pos)
-        if c == a_del:
+        choice = m.exec(pos)
+        if not choice:
+            return
+        if choice == a_del:
+            self._push_undo()
             self.network.units.remove(u)
             self.network.connections = [
                 x for x in self.network.connections
                 if x.source_uid != u.uid and x.target_uid != u.uid
             ]
+            self._selected_unit = None
             self._save()
-        elif c == a_conn:
+        elif choice == a_conn:
             self._connecting_from = u
             self.setCursor(Qt.CursorShape.CrossCursor)
-        elif c == a_ren:
+        elif choice == a_ren:
+            self._push_undo()
             t, ok = QInputDialog.getText(self, "Rename", "Label:", text=u.label)
             if ok and t.strip():
                 u.label = t.strip()
                 self._save()
-        elif c == a_link:
+        elif choice == a_link:
             self.parent_canvas.link_hardware(u)
+        else:
+            for a, c in conn_actions:
+                if choice == a:
+                    self._push_undo()
+                    self.network.connections.remove(c)
+                    self._save()
+                    break
+
+    def _show_canvas_menu(self, pos):
+        if not self._undo_stack:
+            return
+        m = QMenu(self)
+        m.setStyleSheet(self._menu_style())
+        a_undo = m.addAction("Undo")
+        if m.exec(pos) == a_undo:
+            self._undo()
+
+    def _push_undo(self):
+        if not self.network:
+            return
+        snapshot = {
+            "units": [asdict(u) for u in self.network.units],
+            "connections": [asdict(c) for c in self.network.connections],
+        }
+        self._undo_stack.append(snapshot)
+        if len(self._undo_stack) > self.MAX_UNDO:
+            self._undo_stack.pop(0)
+
+    def _undo(self):
+        if not self._undo_stack or not self.network:
+            return
+        snapshot = self._undo_stack.pop()
+        self.network.units = [Unit(**u) for u in snapshot["units"]]
+        self.network.connections = [Connection(**c) for c in snapshot["connections"]]
+        self.parent_canvas.store.save_network(self.network)
+
+    def _delete_selected(self):
+        if not self._selected_unit or not self.network:
+            return
+        u = self._selected_unit
+        self._push_undo()
+        self.network.units.remove(u)
+        self.network.connections = [
+            x for x in self.network.connections
+            if x.source_uid != u.uid and x.target_uid != u.uid
+        ]
+        self._selected_unit = None
+        self._save()
+
+    def keyPressEvent(self, e):
+        if e.matches(QKeySequence.StandardKey.Undo):
+            self._undo()
+            return
+        if e.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+            self._delete_selected()
+            return
+        if e.key() == Qt.Key.Key_Escape:
+            if self._connecting_from:
+                self._connecting_from = None
+                self.setCursor(Qt.CursorShape.ArrowCursor)
+            self._selected_unit = None
+            return
+        super().keyPressEvent(e)
 
     def _save(self):
         if self.network:
@@ -220,7 +341,9 @@ class CanvasWidget(QWidget):
             category=cat,
             type_id=tid,
         )
+        self._push_undo()
         self.network.units.append(u)
+        self._selected_unit = u
         self._save()
         e.acceptProposedAction()
 
@@ -231,9 +354,9 @@ class PaletteItem(QPushButton):
         self.category = category
         self.type_id = type_id
         self.setStyleSheet(
-            f"QPushButton{{text-align:left;padding:9px 12px;border:1px dashed {BORDER};"
-            f"border-radius:8px;font-size:11px;background:{BG_CARD}}}"
-            f"QPushButton:hover{{border-color:{ACCENT};background:{BG_INPUT}}}"
+            f"QPushButton{{text-align:left;padding:8px 12px;border:1px solid {BORDER};"
+            f"border-radius:6px;font-size:11px;color:{TEXT_SECONDARY};background:{BG_CARD}}}"
+            f"QPushButton:hover{{border-color:{BORDER_HOVER};color:{TEXT_PRIMARY};background:{BG_HOVER}}}"
         )
         self.setCursor(Qt.CursorShape.OpenHandCursor)
 
@@ -244,7 +367,7 @@ class PaletteItem(QPushButton):
             mime.setText(f"{self.category}:{self.type_id}")
             d.setMimeData(mime)
             pm = QPixmap(self.size())
-            pm.fill(QColor(0, 212, 170, 80))
+            pm.fill(QColor(107, 138, 253, 50))
             d.setPixmap(pm)
             d.exec(Qt.DropAction.CopyAction)
 

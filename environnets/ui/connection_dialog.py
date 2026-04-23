@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
 )
 
 from environnets.core import PioAPI
-from environnets.ui.theme import GREEN, RED, TEXT_SECONDARY, ACCENT
+from environnets.ui.theme import GREEN, RED, TEXT_SECONDARY, TEXT_MUTED
 
 
 class ConnectionDialog(QDialog):

@@ -7,8 +7,8 @@ from PyQt6.QtWidgets import (
 from environnets.core.experiments import Experiment, save_experiment
 from environnets.ui.canvas import NetworkCanvas
 from environnets.ui.theme import (
-    ACCENT, GREEN, RED, AMBER, BG_CARD, BG_PANEL, BORDER,
-    TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED,
+    ACCENT, ACCENT_DIM, GREEN, RED, AMBER, BG_CARD, BG_PANEL, BG_HOVER,
+    BORDER, BORDER_HOVER, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED,
 )
 
 
@@ -26,12 +26,12 @@ class ExperimentPanel(QWidget):
         # Header bar
         header = QFrame()
         header.setStyleSheet(f"background:{BG_PANEL};border-bottom:1px solid {BORDER}")
-        header.setFixedHeight(64)
+        header.setFixedHeight(58)
         hl = QHBoxLayout(header)
         hl.setContentsMargins(20, 10, 20, 10)
 
         name = QLabel(experiment.name)
-        name.setStyleSheet(f"font-size:16px;font-weight:500;color:{TEXT_PRIMARY}")
+        name.setStyleSheet(f"font-size:15px;font-weight:500;color:{TEXT_PRIMARY}")
         desc = QLabel(experiment.description or "No description")
         desc.setStyleSheet(f"font-size:11px;color:{TEXT_MUTED}")
 
@@ -43,14 +43,17 @@ class ExperimentPanel(QWidget):
         hl.addStretch()
 
         self._status_label = QLabel("Draft")
-        self._status_label.setStyleSheet(f"color:{AMBER};font-size:12px;padding:4px 10px;border:1px solid {BORDER};border-radius:6px")
+        self._status_label.setStyleSheet(
+            f"color:{TEXT_MUTED};font-size:11px;padding:4px 10px;"
+            f"border:1px solid {BORDER};border-radius:4px"
+        )
         hl.addWidget(self._status_label)
 
         self._start_btn = QPushButton("Start experiment")
-        self._start_btn.setProperty("class", "primary")
         self._start_btn.setStyleSheet(
-            f"QPushButton{{background:{ACCENT};color:#1a1a2e;border:none;border-radius:6px;padding:8px 18px;font-weight:500}}"
-            f"QPushButton:hover{{background:#00eabb}}"
+            f"QPushButton{{background:{ACCENT_DIM};color:{TEXT_PRIMARY};border:1px solid {ACCENT_DIM};"
+            f"border-radius:6px;padding:8px 18px;font-weight:500;font-size:12px}}"
+            f"QPushButton:hover{{background:{ACCENT};color:#fff}}"
         )
         self._start_btn.clicked.connect(self._toggle_experiment)
         hl.addWidget(self._start_btn)
@@ -200,19 +203,24 @@ class ExperimentPanel(QWidget):
         if self.experiment.status == "running":
             self._status_label.setText("Running")
             self._status_label.setStyleSheet(
-                f"color:{GREEN};font-size:12px;padding:4px 10px;border:1px solid {GREEN};border-radius:6px"
+                f"color:{GREEN};font-size:11px;padding:4px 10px;"
+                f"border:1px solid {BORDER};border-radius:4px"
             )
             self._start_btn.setText("Stop experiment")
             self._start_btn.setStyleSheet(
-                f"QPushButton{{background:{RED};color:white;border:none;border-radius:6px;padding:8px 18px;font-weight:500}}"
+                f"QPushButton{{background:transparent;color:{RED};border:1px solid {BORDER};"
+                f"border-radius:6px;padding:8px 18px;font-weight:500;font-size:12px}}"
+                f"QPushButton:hover{{background:#2a1a1a;border-color:{RED}}}"
             )
         else:
             self._status_label.setText(self.experiment.status.capitalize())
             self._status_label.setStyleSheet(
-                f"color:{AMBER};font-size:12px;padding:4px 10px;border:1px solid {BORDER};border-radius:6px"
+                f"color:{TEXT_MUTED};font-size:11px;padding:4px 10px;"
+                f"border:1px solid {BORDER};border-radius:4px"
             )
             self._start_btn.setText("Start experiment")
             self._start_btn.setStyleSheet(
-                f"QPushButton{{background:{ACCENT};color:#1a1a2e;border:none;border-radius:6px;padding:8px 18px;font-weight:500}}"
-                f"QPushButton:hover{{background:#00eabb}}"
+                f"QPushButton{{background:{ACCENT_DIM};color:{TEXT_PRIMARY};border:1px solid {ACCENT_DIM};"
+                f"border-radius:6px;padding:8px 18px;font-weight:500;font-size:12px}}"
+                f"QPushButton:hover{{background:{ACCENT};color:#fff}}"
             )

@@ -6,7 +6,8 @@ from PyQt6.QtWidgets import (
 import pyqtgraph as pg
 
 from environnets.ui.theme import (
-    ACCENT, BG_DARK, BG_CARD, BG_PANEL, BORDER, TEXT_PRIMARY, TEXT_SECONDARY, GREEN,
+    ACCENT, ACCENT_DIM, BG_DARK, BG_CARD, BG_PANEL, BG_HOVER,
+    BORDER, TEXT_PRIMARY, TEXT_SECONDARY, GREEN,
 )
 
 pg.setConfigOption("background", BG_DARK)
@@ -41,7 +42,9 @@ class UnitDetailDialog(QDialog):
 
         dose_btn = QPushButton("Dose 0.5 mL media")
         dose_btn.setStyleSheet(
-            f"QPushButton{{background:{ACCENT};color:#1a1a2e;border:none;border-radius:6px;padding:8px 16px;font-weight:500}}"
+            f"QPushButton{{background:{ACCENT_DIM};color:{TEXT_PRIMARY};border:1px solid {ACCENT_DIM};"
+            f"border-radius:6px;padding:8px 16px;font-weight:500}}"
+            f"QPushButton:hover{{background:{ACCENT};color:#fff}}"
         )
         dose_btn.clicked.connect(self._dose)
         if unit.category == "pump":
@@ -49,16 +52,16 @@ class UnitDetailDialog(QDialog):
         root.addLayout(hdr)
 
         # Three charts
-        self.od_plot = self._make_plot("OD (optical density)", ACCENT)
-        self.temp_plot = self._make_plot("Temperature (C)", "#f08030")
-        self.gr_plot = self._make_plot("Growth rate", "#9f77dd")
+        self.od_plot = self._make_plot("OD (optical density)", "#7a9ec7")
+        self.temp_plot = self._make_plot("Temperature (C)", "#c48a5a")
+        self.gr_plot = self._make_plot("Growth rate", "#8a7ab5")
         root.addWidget(self.od_plot, 1)
         root.addWidget(self.temp_plot, 1)
         root.addWidget(self.gr_plot, 1)
 
-        self.od_curve = self.od_plot.plot(pen=pg.mkPen(ACCENT, width=2))
-        self.temp_curve = self.temp_plot.plot(pen=pg.mkPen("#f08030", width=2))
-        self.gr_curve = self.gr_plot.plot(pen=pg.mkPen("#9f77dd", width=2))
+        self.od_curve = self.od_plot.plot(pen=pg.mkPen("#7a9ec7", width=2))
+        self.temp_curve = self.temp_plot.plot(pen=pg.mkPen("#c48a5a", width=2))
+        self.gr_curve = self.gr_plot.plot(pen=pg.mkPen("#8a7ab5", width=2))
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._refresh)
