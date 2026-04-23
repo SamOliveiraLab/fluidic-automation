@@ -518,10 +518,12 @@ const usePioreactorData = () => {
   // Stop a job on all online workers
   // Official Pioreactor API: POST /api/workers/{unit}/jobs/stop/job_name/{job}/experiments/{exp}
   const stopJob = async (jobName) => {
-    if (!experiment) return;
+    if (!experiment) return { success: false, error: "No active experiment" };
     const expEnc = encodeURIComponent(experiment.experiment);
     const onlineReactors = reactors.filter((r) => r.status === "online");
-    await Promise.allSettled(
+    if (!onlineReactors.length)
+      return { success: false, error: "No online bioreactors" };
+    const results = await Promise.allSettled(
       onlineReactors.map((r) =>
         pioFetch(
           buildApiUrl(
@@ -531,7 +533,35 @@ const usePioreactorData = () => {
         ),
       ),
     );
+    const succeeded = results.filter(
+      (r) => r.status === "fulfilled" && r.value?.ok,
+    ).length;
     setTimeout(fetchAll, 2000);
+    return {
+      success: succeeded > 0,
+      stopped: succeeded,
+      total: onlineReactors.length,
+    };
+  };
+
+  // Stop ALL jobs on ALL workers for the current experiment
+  // Official Pioreactor API: POST /api/workers/jobs/stop/experiments/{exp}
+  const stopExperiment = async () => {
+    if (!experiment) return { success: false, error: "No active experiment" };
+    const expEnc = encodeURIComponent(experiment.experiment);
+    try {
+      const res = await pioFetch(
+        buildApiUrl(`/api/workers/jobs/stop/experiments/${expEnc}`),
+        { method: "POST" },
+      );
+      setTimeout(fetchAll, 2000);
+      if (!res.ok) {
+        return { success: false, error: `API error ${res.status}` };
+      }
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
   };
 
   const selectExperiment = (expName) => {
@@ -594,6 +624,7 @@ const usePioreactorData = () => {
     toggleStatus,
     startJob,
     stopJob,
+    stopExperiment,
     selectExperiment,
     createExperiment,
     refresh: fetchAll,
@@ -2165,6 +2196,7 @@ export default function App() {
     toggleStatus,
     startJob,
     stopJob,
+    stopExperiment,
     selectExperiment,
     createExperiment,
     logs,
@@ -2206,6 +2238,15 @@ export default function App() {
   const [newExpName, setNewExpName] = useState("");
   const [newExpDesc, setNewExpDesc] = useState("");
   const [creatingExp, setCreatingExp] = useState(false);
+
+  // Stop experiment confirm + in-flight state
+  const [showStopExp, setShowStopExp] = useState(false);
+  const [stoppingExp, setStoppingExp] = useState(false);
+
+  // Shared feedback modal: { open, title, message, tone: "success"|"error"|"info" }
+  const [feedback, setFeedback] = useState({ open: false, title: "", message: "", tone: "info" });
+  const showFeedback = (title, message, tone = "info") =>
+    setFeedback({ open: true, title, message, tone });
 
   const online = reactors.filter((r) => r.status === "online").length;
   const chartLiveMode = !timeRange.start && !timeRange.end;
@@ -2392,6 +2433,7 @@ export default function App() {
   useEffect(() => { localStorage.setItem("pio_targetRpm", targetRpm); }, [targetRpm]);
   const [runningJobs, setRunningJobs] = useState({});
   const manualJobOverride = useRef({}); // tracks recent button clicks
+  const anyJobRunning = Object.values(runningJobs).some(Boolean);
 
   // Detect running jobs from telemetry freshness
   useEffect(() => {
@@ -3178,18 +3220,30 @@ export default function App() {
                 ))}
               </select>
               <button
-                onClick={() => setShowNewExp(true)}
+                onClick={() => {
+                  if (anyJobRunning) {
+                    showFeedback(
+                      "Stop the current experiment first",
+                      `Jobs are still running on "${experiment?.experiment}". Stop it before starting a new experiment.`,
+                      "error",
+                    );
+                    return;
+                  }
+                  setShowNewExp(true);
+                }}
                 style={{
                   padding: "6px 16px",
                   borderRadius: 8,
-                  border: `1.5px solid ${th.accent}`,
-                  background: th.accentLight,
-                  color: th.accent,
+                  border: `1.5px solid ${anyJobRunning ? th.border : th.accent}`,
+                  background: anyJobRunning ? th.bgAlt : th.accentLight,
+                  color: anyJobRunning ? th.textMuted : th.accent,
                   fontSize: 14,
                   fontWeight: 700,
-                  cursor: "pointer",
+                  cursor: anyJobRunning ? "not-allowed" : "pointer",
                   fontFamily: "inherit",
+                  opacity: anyJobRunning ? 0.7 : 1,
                 }}
+                title={anyJobRunning ? "Stop the current experiment before starting a new one" : ""}
               >
                 + New Experiment
               </button>
@@ -3201,15 +3255,45 @@ export default function App() {
                 </span>
               )}
               <button
+                onClick={() => {
+                  if (!experiment) return;
+                  setShowStopExp(true);
+                }}
+                disabled={!experiment || !connected}
+                style={{
+                  padding: "4px 10px", borderRadius: 6, fontSize: 12, fontWeight: 600, fontFamily: "inherit",
+                  background: th.warningBg, border: `1px solid ${th.warning}40`, color: th.warning,
+                  cursor: (!experiment || !connected) ? "not-allowed" : "pointer", marginLeft: "auto",
+                  opacity: (!experiment || !connected) ? 0.5 : 1,
+                }}
+                title="Stop all jobs on this experiment"
+              >■ Stop Experiment</button>
+              <button
                 onClick={async () => {
                   if (!experiment) return;
                   if (!confirm(`Delete "${experiment.experiment}"? This stops all jobs and removes all data for this experiment.`)) return;
-                  await pioFetch(buildApiUrl(`/api/experiments/${encodeURIComponent(experiment.experiment)}`), { method: "DELETE" });
-                  setTimeout(refresh, 500);
+                  const expName = experiment.experiment;
+                  try {
+                    const res = await pioFetch(
+                      buildApiUrl(`/api/experiments/${encodeURIComponent(expName)}`),
+                      { method: "DELETE" },
+                    );
+                    setTimeout(refresh, 500);
+                    if (res.ok) {
+                      showFeedback("Experiment deleted", `"${expName}" was removed.`, "success");
+                    } else {
+                      showFeedback("Could not delete experiment", `API error ${res.status}.`, "error");
+                    }
+                  } catch (e) {
+                    showFeedback("Could not delete experiment", e.message || "Network error.", "error");
+                  }
                 }}
+                disabled={!experiment}
                 style={{
                   padding: "4px 10px", borderRadius: 6, fontSize: 12, fontWeight: 600, fontFamily: "inherit",
-                  background: th.dangerBg, border: `1px solid ${th.danger}30`, color: th.danger, cursor: "pointer", marginLeft: "auto",
+                  background: th.dangerBg, border: `1px solid ${th.danger}30`, color: th.danger,
+                  cursor: !experiment ? "not-allowed" : "pointer",
+                  opacity: !experiment ? 0.5 : 1,
                 }}
               >Delete Experiment</button>
             </div>
@@ -4648,16 +4732,25 @@ export default function App() {
               <button
                 onClick={async () => {
                   if (!newExpName.trim()) return;
+                  if (anyJobRunning) {
+                    showFeedback(
+                      "Stop the current experiment first",
+                      "Jobs are still running. Stop the current experiment before creating a new one.",
+                      "error",
+                    );
+                    return;
+                  }
                   setCreatingExp(true);
-                  const res = await createExperiment(
-                    newExpName.trim(),
-                    newExpDesc.trim(),
-                  );
+                  const name = newExpName.trim();
+                  const res = await createExperiment(name, newExpDesc.trim());
                   setCreatingExp(false);
                   if (res.success) {
                     setShowNewExp(false);
                     setNewExpName("");
                     setNewExpDesc("");
+                    showFeedback("Experiment created", `"${name}" is now active.`, "success");
+                  } else {
+                    showFeedback("Could not create experiment", res.error || "Unknown error.", "error");
                   }
                 }}
                 disabled={creatingExp || !newExpName.trim()}
@@ -4697,6 +4790,110 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Stop Experiment Confirm Modal */}
+      {showStopExp && (
+        <div
+          style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 1000,
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}
+          onClick={() => !stoppingExp && setShowStopExp(false)}
+        >
+          <div
+            style={{
+              background: th.surface, borderRadius: 16, padding: "24px 28px",
+              width: 420, maxWidth: "90vw", boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 style={{ margin: "0 0 10px", fontSize: 20, fontWeight: 700, color: th.text }}>
+              Stop experiment?
+            </h2>
+            <p style={{ margin: "0 0 20px", fontSize: 14, color: th.textSecondary, lineHeight: 1.5 }}>
+              This stops all jobs (stirring, OD, temperature, growth rate, dosing) on every reactor assigned to{" "}
+              <strong style={{ color: th.text }}>{experiment?.experiment}</strong>. Data is kept.
+            </p>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button
+                onClick={async () => {
+                  setStoppingExp(true);
+                  const res = await stopExperiment();
+                  setStoppingExp(false);
+                  setShowStopExp(false);
+                  if (res.success) {
+                    showFeedback("Experiment stopped", `All jobs stopped on ${experiment?.experiment}.`, "success");
+                  } else {
+                    showFeedback("Could not stop experiment", res.error || "Unknown error.", "error");
+                  }
+                }}
+                disabled={stoppingExp}
+                style={{
+                  flex: 1, padding: "11px", borderRadius: 10, border: "none",
+                  background: th.danger, color: "#fff", fontWeight: 700, fontSize: 15,
+                  cursor: "pointer", fontFamily: "inherit", opacity: stoppingExp ? 0.6 : 1,
+                }}
+              >
+                {stoppingExp ? "Stopping..." : "Stop experiment"}
+              </button>
+              <button
+                onClick={() => setShowStopExp(false)}
+                disabled={stoppingExp}
+                style={{
+                  padding: "11px 18px", borderRadius: 10, border: `1px solid ${th.border}`,
+                  background: "transparent", color: th.textSecondary, fontWeight: 600, fontSize: 15,
+                  cursor: "pointer", fontFamily: "inherit",
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Shared Feedback Modal */}
+      {feedback.open && (
+        <div
+          style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 1100,
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}
+          onClick={() => setFeedback((f) => ({ ...f, open: false }))}
+        >
+          <div
+            style={{
+              background: th.surface, borderRadius: 16, padding: "24px 28px",
+              width: 400, maxWidth: "90vw", boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
+              borderTop: `3px solid ${
+                feedback.tone === "success" ? th.success :
+                feedback.tone === "error" ? th.danger : th.accent
+              }`,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 style={{ margin: "0 0 10px", fontSize: 18, fontWeight: 700, color: th.text }}>
+              {feedback.title}
+            </h2>
+            <p style={{ margin: "0 0 20px", fontSize: 14, color: th.textSecondary, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
+              {feedback.message}
+            </p>
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <button
+                onClick={() => setFeedback((f) => ({ ...f, open: false }))}
+                style={{
+                  padding: "9px 22px", borderRadius: 8, border: "none",
+                  background: th.accent, color: "#fff", fontWeight: 700, fontSize: 14,
+                  cursor: "pointer", fontFamily: "inherit",
+                }}
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}*{box-sizing:border-box;margin:0}::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:${th.border};border-radius:3px}`}</style>
     </div>
   );
