@@ -242,10 +242,20 @@ const usePioreactorData = () => {
   const [loading, setLoading] = useState(true);
   const [experiment, setExperiment] = useState(null);
   const [allExperiments, setAllExperiments] = useState([]);
-  const [selectedExpName, setSelectedExpName] = useState(null); // null = use latest
+  const [selectedExpName, setSelectedExpName] = useState(() => {
+    try {
+      return localStorage.getItem("pioreactor_selected_exp") || null;
+    } catch {
+      return null;
+    }
+  }); // null = use latest
   const selectedExpRef = useRef(selectedExpName);
   useEffect(() => {
     selectedExpRef.current = selectedExpName;
+    try {
+      if (selectedExpName) localStorage.setItem("pioreactor_selected_exp", selectedExpName);
+      else localStorage.removeItem("pioreactor_selected_exp");
+    } catch {}
   }, [selectedExpName]);
   const [reactors, setReactors] = useState([]);
   const [odData, setOdData] = useState({
@@ -2308,6 +2318,21 @@ export default function App() {
   const [showStopExp, setShowStopExp] = useState(false);
   const [stoppingExp, setStoppingExp] = useState(false);
 
+  // Start experiment config modal
+  const [showStartExp, setShowStartExp] = useState(false);
+  const [startingExp, setStartingExp] = useState(false);
+  const [startCfg, setStartCfg] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("pioreactor_start_cfg") || "null");
+      return saved || { rpm: "400", temp: "30", od: true, growth: true };
+    } catch {
+      return { rpm: "400", temp: "30", od: true, growth: true };
+    }
+  });
+  useEffect(() => {
+    try { localStorage.setItem("pioreactor_start_cfg", JSON.stringify(startCfg)); } catch {}
+  }, [startCfg]);
+
   // Shared feedback modal: { open, title, message, tone: "success"|"error"|"info" }
   const [feedback, setFeedback] = useState({ open: false, title: "", message: "", tone: "info" });
   const showFeedback = (title, message, tone = "info") =>
@@ -2535,6 +2560,64 @@ export default function App() {
     await stopJob(jobName);
     setRunningJobs((prev) => ({ ...prev, [jobName]: false }));
     setStopping((prev) => ({ ...prev, [jobName]: false }));
+  };
+
+  // Start the configured experiment: stirring → temperature → OD → growth rate.
+  // Each job depends on the previous; small delays let Pioreactor settle.
+  const handleStartExperiment = async (cfg) => {
+    if (!experiment) return { success: false, error: "No active experiment" };
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const steps = [];
+    const rpm = parseFloat(cfg.rpm);
+    const temp = parseFloat(cfg.temp);
+
+    const stir = await startJob("stirring", { target_rpm: String(rpm) });
+    steps.push({ name: "Stirring", ...stir });
+    await sleep(2000);
+
+    const tempRes = await startJob("temperature_automation", {
+      automation_name: "thermostat",
+      target_temperature: temp,
+    });
+    steps.push({ name: "Temperature", ...tempRes });
+    await sleep(2000);
+
+    if (cfg.od) {
+      const odRes = await startJob("od_reading", {});
+      steps.push({ name: "OD Reading", ...odRes });
+      await sleep(2000);
+    }
+    if (cfg.growth) {
+      const grRes = await startJob("growth_rate_calculating", {});
+      steps.push({ name: "Growth Rate", ...grRes });
+    }
+
+    // Optimistically mark running so charts flip to the chart view immediately.
+    const now = Date.now();
+    const nextRunning = {
+      stirring: true,
+      temperature_automation: true,
+    };
+    manualJobOverride.current.stirring = now;
+    manualJobOverride.current.temperature_automation = now;
+    if (cfg.od) {
+      nextRunning.od_reading = true;
+      manualJobOverride.current.od_reading = now;
+    }
+    if (cfg.growth) {
+      nextRunning.growth_rate_calculating = true;
+      manualJobOverride.current.growth_rate_calculating = now;
+    }
+    setRunningJobs((prev) => ({ ...prev, ...nextRunning }));
+
+    const failed = steps.filter((s) => !s.success);
+    if (!failed.length) return { success: true, steps };
+    return {
+      success: steps.some((s) => s.success),
+      partial: true,
+      steps,
+      error: failed.map((f) => `${f.name}: ${f.error || "failed"}`).join(", "),
+    };
   };
 
   const nav = [
@@ -3328,20 +3411,37 @@ export default function App() {
                   {experiment.description}
                 </span>
               )}
-              <button
-                onClick={() => {
-                  if (!experiment) return;
-                  setShowStopExp(true);
-                }}
-                disabled={!experiment || !connected}
-                style={{
-                  padding: "4px 10px", borderRadius: 6, fontSize: 12, fontWeight: 600, fontFamily: "inherit",
-                  background: th.warningBg, border: `1px solid ${th.warning}40`, color: th.warning,
-                  cursor: (!experiment || !connected) ? "not-allowed" : "pointer", marginLeft: "auto",
-                  opacity: (!experiment || !connected) ? 0.5 : 1,
-                }}
-                title="Stop all jobs on this experiment"
-              >■ Stop Experiment</button>
+              {anyJobRunning ? (
+                <button
+                  onClick={() => {
+                    if (!experiment) return;
+                    setShowStopExp(true);
+                  }}
+                  disabled={!experiment || !connected}
+                  style={{
+                    padding: "6px 14px", borderRadius: 7, fontSize: 13, fontWeight: 700, fontFamily: "inherit",
+                    background: th.dangerBg, border: `1px solid ${th.danger}40`, color: th.danger,
+                    cursor: (!experiment || !connected) ? "not-allowed" : "pointer", marginLeft: "auto",
+                    opacity: (!experiment || !connected) ? 0.5 : 1,
+                  }}
+                  title="Stop all jobs on this experiment"
+                >■ Stop Experiment</button>
+              ) : (
+                <button
+                  onClick={() => {
+                    if (!experiment) return;
+                    setShowStartExp(true);
+                  }}
+                  disabled={!experiment || !connected}
+                  style={{
+                    padding: "6px 14px", borderRadius: 7, fontSize: 13, fontWeight: 700, fontFamily: "inherit",
+                    background: `${th.success}15`, border: `1px solid ${th.success}50`, color: th.success,
+                    cursor: (!experiment || !connected) ? "not-allowed" : "pointer", marginLeft: "auto",
+                    opacity: (!experiment || !connected) ? 0.5 : 1,
+                  }}
+                  title="Configure and start this experiment"
+                >▶ Start Experiment</button>
+              )}
               <button
                 onClick={async () => {
                   if (!experiment) return;
@@ -3370,70 +3470,6 @@ export default function App() {
                   opacity: !experiment ? 0.5 : 1,
                 }}
               >Delete Experiment</button>
-            </div>
-
-            {/* Quick Controls Bar */}
-            <div style={{
-              display: "flex", alignItems: "center", gap: 10, marginBottom: 16, padding: "10px 16px",
-              background: th.surface, border: `1px solid ${th.border}`, borderRadius: 12, boxShadow: th.shadow, flexWrap: "wrap",
-            }}>
-              {/* Stirring */}
-              <span style={{ fontSize: 13, fontWeight: 700, color: th.textMuted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Stirring</span>
-              <input type="number" value={targetRpm} onChange={e => setTargetRpm(e.target.value)} step="50" min="0" max="1200" style={{
-                width: 65, padding: "5px 8px", borderRadius: 6, border: `1px solid ${th.border}`, background: th.bgAlt,
-                color: th.text, fontSize: 14, fontFamily: "'JetBrains Mono',monospace", textAlign: "center", outline: "none",
-              }} />
-              <span style={{ fontSize: 12, color: th.textMuted }}>RPM</span>
-              <button onClick={() => {
-                if (runningJobs.stirring) {
-                  handleStopJob("stirring");
-                } else {
-                  handleStartJob("stirring", { target_rpm: targetRpm });
-                }
-              }} style={{
-                padding: "5px 12px", borderRadius: 6, fontSize: 13, fontWeight: 700, fontFamily: "inherit", cursor: "pointer",
-                background: runningJobs.stirring ? th.dangerBg : `${th.success}15`,
-                border: `1px solid ${runningJobs.stirring ? th.danger : th.success}40`,
-                color: runningJobs.stirring ? th.danger : th.success,
-              }} >{runningJobs.stirring ? "■ Stop Stirring" : "▶ Start"}</button>
-              {runningJobs.stirring && (
-                <button onClick={() => {
-                    if (!experiment) return;
-                    const expEnc = encodeURIComponent(experiment.experiment);
-                    reactors.filter(r => r.status === "online").forEach(r => {
-                      pioFetch(buildApiUrl(`/api/workers/${encodeURIComponent(r.id)}/jobs/update/job_name/stirring/experiments/${expEnc}`), {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ settings: { target_rpm: String(targetRpm) } }),
-                      });
-                    });
-                  }} style={{
-                    padding: "5px 10px", borderRadius: 6, fontSize: 12, fontWeight: 700, fontFamily: "inherit",
-                    background: th.accentLight, border: `1px solid ${th.accent}40`, color: th.accent, cursor: "pointer",
-                  }}>Set RPM</button>
-              )}
-
-              <div style={{ width: 1, height: 24, background: th.border, margin: "0 6px" }} />
-
-              {/* Quick start/stop all readings */}
-              <span style={{ fontSize: 13, fontWeight: 700, color: th.textMuted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Readings</span>
-              <button onClick={async () => {
-                await handleStartJob("stirring", { target_rpm: targetRpm });
-                setTimeout(() => handleStartJob("od_reading"), 3000);
-                setTimeout(() => handleStartJob("growth_rate_calculating"), 6000);
-              }} style={{
-                padding: "5px 14px", borderRadius: 6, fontSize: 13, fontWeight: 700, fontFamily: "inherit",
-                background: `${th.success}15`, border: `1px solid ${th.success}40`, color: th.success, cursor: "pointer",
-              }}>▶ Start All</button>
-              <button onClick={async () => {
-                await handleStopJob("od_reading");
-                await handleStopJob("growth_rate_calculating");
-                await handleStopJob("stirring");
-                await handleStopJob("dosing_automation");
-              }} style={{
-                padding: "5px 14px", borderRadius: 6, fontSize: 13, fontWeight: 700, fontFamily: "inherit",
-                background: th.dangerBg, border: `1px solid ${th.danger}40`, color: th.danger, cursor: "pointer",
-              }}>■ Stop All</button>
             </div>
 
             <TimeRangeBar
@@ -4856,6 +4892,116 @@ export default function App() {
                   fontSize: 16,
                   cursor: "pointer",
                   fontFamily: "inherit",
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Start Experiment Config Modal */}
+      {showStartExp && (
+        <div
+          style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 1000,
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}
+          onClick={() => !startingExp && setShowStartExp(false)}
+        >
+          <div
+            style={{
+              background: th.surface, borderRadius: 16, padding: "24px 28px",
+              width: 440, maxWidth: "90vw", boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 style={{ margin: "0 0 6px", fontSize: 20, fontWeight: 700, color: th.text }}>
+              Start experiment
+            </h2>
+            <p style={{ margin: "0 0 18px", fontSize: 13, color: th.textMuted, lineHeight: 1.5 }}>
+              Configure the run, then press Start. Jobs begin in order: stirring → temperature → OD → growth rate.
+            </p>
+
+            <label style={{ fontSize: 13, fontWeight: 600, color: th.textSecondary, display: "block", marginBottom: 6 }}>
+              Stirring (RPM)
+            </label>
+            <input
+              type="number" step="50" min="0" max="1200"
+              value={startCfg.rpm}
+              onChange={(e) => setStartCfg((c) => ({ ...c, rpm: e.target.value }))}
+              style={{
+                width: "100%", padding: "9px 12px", borderRadius: 8,
+                border: `1px solid ${th.border}`, background: th.bgAlt,
+                color: th.text, fontSize: 15, fontFamily: "'JetBrains Mono',monospace",
+                outline: "none", marginBottom: 14,
+              }}
+            />
+
+            <label style={{ fontSize: 13, fontWeight: 600, color: th.textSecondary, display: "block", marginBottom: 6 }}>
+              Target Temperature (°C) — thermostat
+            </label>
+            <input
+              type="number" step="0.5" min="20" max="50"
+              value={startCfg.temp}
+              onChange={(e) => setStartCfg((c) => ({ ...c, temp: e.target.value }))}
+              style={{
+                width: "100%", padding: "9px 12px", borderRadius: 8,
+                border: `1px solid ${th.border}`, background: th.bgAlt,
+                color: th.text, fontSize: 15, fontFamily: "'JetBrains Mono',monospace",
+                outline: "none", marginBottom: 16,
+              }}
+            />
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, color: th.text, cursor: "pointer" }}>
+                <input
+                  type="checkbox" checked={startCfg.od}
+                  onChange={(e) => setStartCfg((c) => ({ ...c, od: e.target.checked }))}
+                />
+                Start OD Reading
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, color: th.text, cursor: "pointer" }}>
+                <input
+                  type="checkbox" checked={startCfg.growth}
+                  onChange={(e) => setStartCfg((c) => ({ ...c, growth: e.target.checked }))}
+                />
+                Calculate Growth Rate
+              </label>
+            </div>
+
+            <div style={{ display: "flex", gap: 10 }}>
+              <button
+                onClick={async () => {
+                  setStartingExp(true);
+                  const res = await handleStartExperiment(startCfg);
+                  setStartingExp(false);
+                  setShowStartExp(false);
+                  if (res.success && !res.partial) {
+                    showFeedback("Experiment started", `Running on ${experiment?.experiment}.`, "success");
+                  } else if (res.success && res.partial) {
+                    showFeedback("Experiment started with issues", res.error || "Some jobs failed to start.", "error");
+                  } else {
+                    showFeedback("Could not start experiment", res.error || "Unknown error.", "error");
+                  }
+                }}
+                disabled={startingExp || !startCfg.rpm || !startCfg.temp}
+                style={{
+                  flex: 1, padding: "11px", borderRadius: 10, border: "none",
+                  background: th.success, color: "#fff", fontWeight: 700, fontSize: 15,
+                  cursor: "pointer", fontFamily: "inherit", opacity: startingExp ? 0.6 : 1,
+                }}
+              >
+                {startingExp ? "Starting..." : "▶ Start"}
+              </button>
+              <button
+                onClick={() => setShowStartExp(false)}
+                disabled={startingExp}
+                style={{
+                  padding: "11px 18px", borderRadius: 10, border: `1px solid ${th.border}`,
+                  background: "transparent", color: th.textSecondary, fontWeight: 600, fontSize: 15,
+                  cursor: "pointer", fontFamily: "inherit",
                 }}
               >
                 Cancel
