@@ -1015,12 +1015,15 @@ const Chart = ({
   onStartAction,
   startLabel,
   isRunning,
+  historicalMode,
   headerExtra,
 }) => {
   const [filter, setFilter] = useState("both");
   const [showI, setShowI] = useState(false);
   const ref = useRef(null);
-  const has = data?.length > 0;
+  // In live mode, hide the chart once the job is stopped so the user isn't
+  // confused by stale data. Historical mode (time range set) keeps showing.
+  const has = data?.length > 0 && (isRunning || historicalMode);
   return (
     <>
       <div
@@ -2566,9 +2569,12 @@ export default function App() {
 
   const odP = {
     title: "Optical Density (OD)",
-    subtitle: odData.data.length
-      ? `90° scatter · ${odData.data.length} readings · Live`
-      : "Waiting for data...",
+    subtitle: !runningJobs.od_reading && chartLiveMode
+      ? "Not running"
+      : odData.data.length
+        ? `90° scatter · ${odData.data.length} readings${chartLiveMode ? " · Live" : ""}`
+        : "Waiting for data...",
+    historicalMode: !chartLiveMode,
     data: odData.data,
     keys: odKeys,
     colors: palette,
@@ -2602,9 +2608,12 @@ export default function App() {
   };
   const tempP = {
     title: "Temperature (°C)",
-    subtitle: tempData.data.length
-      ? `${tempData.data.length} readings · Live`
-      : "Not running",
+    subtitle: !runningJobs.temperature_automation && chartLiveMode
+      ? "Not running"
+      : tempData.data.length
+        ? `${tempData.data.length} readings${chartLiveMode ? " · Live" : ""}`
+        : "Waiting for data...",
+    historicalMode: !chartLiveMode,
     data: tempData.data,
     keys: tempKeys,
     colors: palette,
@@ -2685,9 +2694,12 @@ export default function App() {
   };
   const grP = {
     title: "Growth Rate",
-    subtitle: growthData.data.length
-      ? `${growthData.data.length} readings · Live`
-      : "Not running",
+    subtitle: !runningJobs.growth_rate_calculating && chartLiveMode
+      ? "Not running"
+      : growthData.data.length
+        ? `${growthData.data.length} readings${chartLiveMode ? " · Live" : ""}`
+        : "Waiting for data...",
+    historicalMode: !chartLiveMode,
     data: growthData.data,
     keys: growthKeys,
     colors: palette,
@@ -4884,6 +4896,21 @@ export default function App() {
                   setStoppingExp(false);
                   setShowStopExp(false);
                   if (res.success) {
+                    // Optimistically clear runningJobs so charts fall back to
+                    // the empty state immediately, and suppress telemetry-based
+                    // auto re-detection for the next 15s.
+                    const knownJobs = [
+                      "od_reading",
+                      "temperature_automation",
+                      "growth_rate_calculating",
+                      "stirring",
+                      "dosing_automation",
+                    ];
+                    const now = Date.now();
+                    knownJobs.forEach((j) => {
+                      manualJobOverride.current[j] = now;
+                    });
+                    setRunningJobs({});
                     showFeedback("Experiment stopped", `All jobs stopped on ${experiment?.experiment}.`, "success");
                   } else {
                     showFeedback("Could not stop experiment", res.error || "Unknown error.", "error");
