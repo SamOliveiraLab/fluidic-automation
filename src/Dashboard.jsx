@@ -545,23 +545,85 @@ const usePioreactorData = () => {
   };
 
   // Stop ALL jobs on ALL workers for the current experiment
-  // Official Pioreactor API: POST /api/workers/jobs/stop/experiments/{exp}
+  // Preferred: POST /api/workers/jobs/stop/experiments/{exp} (newer Pioreactor)
+  // Fallback 1: POST /api/workers/{unit}/jobs/stop/experiments/{exp} per online worker
+  // Fallback 2: stop known jobs one-by-one per worker (oldest Pioreactor versions)
   const stopExperiment = async () => {
     if (!experiment) return { success: false, error: "No active experiment" };
     const expEnc = encodeURIComponent(experiment.experiment);
+    const onlineReactors = reactors.filter((r) => r.status === "online");
+    if (!onlineReactors.length)
+      return { success: false, error: "No online bioreactors" };
+
+    // Attempt 1: cluster-wide bulk stop
     try {
       const res = await pioFetch(
         buildApiUrl(`/api/workers/jobs/stop/experiments/${expEnc}`),
         { method: "POST" },
       );
-      setTimeout(fetchAll, 2000);
-      if (!res.ok) {
-        return { success: false, error: `API error ${res.status}` };
+      if (res.ok) {
+        setTimeout(fetchAll, 2000);
+        return { success: true };
       }
-      return { success: true };
-    } catch (e) {
-      return { success: false, error: e.message };
+    } catch {
+      /* fall through */
     }
+
+    // Attempt 2: per-worker bulk stop
+    const perWorker = await Promise.allSettled(
+      onlineReactors.map((r) =>
+        pioFetch(
+          buildApiUrl(
+            `/api/workers/${encodeURIComponent(r.id)}/jobs/stop/experiments/${expEnc}`,
+          ),
+          { method: "POST" },
+        ),
+      ),
+    );
+    const okPerWorker = perWorker.filter(
+      (r) => r.status === "fulfilled" && r.value?.ok,
+    ).length;
+    if (okPerWorker === onlineReactors.length) {
+      setTimeout(fetchAll, 2000);
+      return { success: true };
+    }
+
+    // Attempt 3: per-job per-worker (known job names)
+    const jobs = [
+      "stirring",
+      "od_reading",
+      "temperature_automation",
+      "temperature_control",
+      "growth_rate_calculating",
+      "dosing_automation",
+      "dosing_control",
+      "led_automation",
+    ];
+    const results = await Promise.allSettled(
+      onlineReactors.flatMap((r) =>
+        jobs.map((j) =>
+          pioFetch(
+            buildApiUrl(
+              `/api/workers/${encodeURIComponent(r.id)}/jobs/stop/job_name/${j}/experiments/${expEnc}`,
+            ),
+            { method: "POST" },
+          ),
+        ),
+      ),
+    );
+    const anyOk = results.some(
+      (r) => r.status === "fulfilled" && r.value?.ok,
+    );
+    setTimeout(fetchAll, 2000);
+    if (anyOk || okPerWorker > 0) {
+      return {
+        success: true,
+        partial: okPerWorker < onlineReactors.length,
+        workersStopped: Math.max(okPerWorker, 0),
+        workersTotal: onlineReactors.length,
+      };
+    }
+    return { success: false, error: "All stop endpoints returned errors." };
   };
 
   const selectExperiment = (expName) => {
