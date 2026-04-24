@@ -253,7 +253,8 @@ const usePioreactorData = () => {
   useEffect(() => {
     selectedExpRef.current = selectedExpName;
     try {
-      if (selectedExpName) localStorage.setItem("pioreactor_selected_exp", selectedExpName);
+      if (selectedExpName)
+        localStorage.setItem("pioreactor_selected_exp", selectedExpName);
       else localStorage.removeItem("pioreactor_selected_exp");
     } catch {}
   }, [selectedExpName]);
@@ -364,22 +365,26 @@ const usePioreactorData = () => {
       const key = `r${String(workerIdx + 1).padStart(2, "0")}`;
       const checkSeries = (raw) => {
         if (!raw?.series?.length || !raw?.data?.length) return false;
-        const sIdx = raw.series.findIndex(s => {
+        const sIdx = raw.series.findIndex((s) => {
           const unitName = s.replace(/-\d+$/, "");
           return workers[workerIdx] && unitName === workers[workerIdx].id;
         });
         return sIdx >= 0 && raw.data[sIdx]?.length > 0;
       };
-      return checkSeries(odRaw) || checkSeries(tempRaw) || checkSeries(growthRaw);
+      return (
+        checkSeries(odRaw) || checkSeries(tempRaw) || checkSeries(growthRaw)
+      );
     };
 
     // Set reactors once with reachability applied - no flicker
-    setReactors(withOverrides.map((r, i) => {
-      if (r.status === "offline") return r; // is_active=0 or manually excluded
-      if (i === 0) return { ...r, status: "online" }; // leader is always reachable
-      // Other active workers: online if they have data, offline if not
-      return { ...r, status: workerHasData(i) ? "online" : "offline" };
-    }));
+    setReactors(
+      withOverrides.map((r, i) => {
+        if (r.status === "offline") return r; // is_active=0 or manually excluded
+        if (i === 0) return { ...r, status: "online" }; // leader is always reachable
+        // Other active workers: online if they have data, offline if not
+        return { ...r, status: workerHasData(i) ? "online" : "offline" };
+      }),
+    );
 
     // 4. Fetch logs
     const logsRaw = await api(`/api/experiments/${expName}/logs`);
@@ -475,11 +480,18 @@ const usePioreactorData = () => {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ pioreactor_unit: unitId }),
-    }).catch(() =>
-      pioFetch(buildApiUrl(`/api/experiments/${expEnc}/workers/${encodeURIComponent(unitId)}`), {
-        method: "PUT",
-      })
-    ).catch(() => {});
+    })
+      .catch(() =>
+        pioFetch(
+          buildApiUrl(
+            `/api/experiments/${expEnc}/workers/${encodeURIComponent(unitId)}`,
+          ),
+          {
+            method: "PUT",
+          },
+        ),
+      )
+      .catch(() => {});
   };
 
   // Start a job on all online workers
@@ -621,9 +633,7 @@ const usePioreactorData = () => {
         ),
       ),
     );
-    const anyOk = results.some(
-      (r) => r.status === "fulfilled" && r.value?.ok,
-    );
+    const anyOk = results.some((r) => r.status === "fulfilled" && r.value?.ok);
     setTimeout(fetchAll, 2000);
     if (anyOk || okPerWorker > 0) {
       return {
@@ -651,21 +661,33 @@ const usePioreactorData = () => {
       });
       if (res?.ok) {
         // Auto-assign all active workers to the new experiment
-        const activeWorkers = reactors.filter(r => r.status !== "offline");
+        const activeWorkers = reactors.filter((r) => r.status !== "offline");
         await Promise.allSettled(
-          activeWorkers.map(r =>
-            pioFetch(buildApiUrl(`/api/experiments/${encodeURIComponent(name)}/workers`), {
-              method: "PUT",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ pioreactor_unit: r.id }),
-            }).catch(() =>
-              // Try alternate endpoint format
-              pioFetch(buildApiUrl(`/api/experiments/${encodeURIComponent(name)}/workers/${encodeURIComponent(r.id)}`), {
+          activeWorkers.map((r) =>
+            pioFetch(
+              buildApiUrl(
+                `/api/experiments/${encodeURIComponent(name)}/workers`,
+              ),
+              {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
-              })
-            ).catch(() => {})
-          )
+                body: JSON.stringify({ pioreactor_unit: r.id }),
+              },
+            )
+              .catch(() =>
+                // Try alternate endpoint format
+                pioFetch(
+                  buildApiUrl(
+                    `/api/experiments/${encodeURIComponent(name)}/workers/${encodeURIComponent(r.id)}`,
+                  ),
+                  {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                  },
+                ),
+              )
+              .catch(() => {}),
+          ),
         );
         setSelectedExpName(name);
         selectedExpRef.current = name;
@@ -1160,12 +1182,17 @@ const Chart = ({
             </button>
             {onStartAction && onStopAction && (
               <>
-                <span style={{
-                  fontSize: 11, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace",
-                  color: isRunning ? th.success : th.textMuted,
-                  background: isRunning ? `${th.success}12` : th.bgAlt,
-                  padding: "4px 8px", borderRadius: 20,
-                }}>
+                <span
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 700,
+                    fontFamily: "'JetBrains Mono',monospace",
+                    color: isRunning ? th.success : th.textMuted,
+                    background: isRunning ? `${th.success}12` : th.bgAlt,
+                    padding: "4px 8px",
+                    borderRadius: 20,
+                  }}
+                >
                   {isRunning ? "RUNNING" : "STOPPED"}
                 </span>
                 <select
@@ -1193,7 +1220,9 @@ const Chart = ({
                     outline: "none",
                   }}
                 >
-                  <option value="" disabled>Actions</option>
+                  <option value="" disabled>
+                    Actions
+                  </option>
                   <option value="start">▶ Start</option>
                   <option value="stop">■ Stop</option>
                   <option value="restart">↻ Restart</option>
@@ -1877,63 +1906,67 @@ const AnimatedVial = ({
 
   return (
     <div
-      style={embedded ? {} : {
-        background: th.surface,
-        border: `1px solid ${th.border}`,
-        borderRadius: 14,
-        padding: "16px 20px",
-        boxShadow: th.shadow,
-      }}
+      style={
+        embedded
+          ? {}
+          : {
+              background: th.surface,
+              border: `1px solid ${th.border}`,
+              borderRadius: 14,
+              padding: "16px 20px",
+              boxShadow: th.shadow,
+            }
+      }
     >
       {!embedded && (
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          marginBottom: 8,
-        }}
-      >
-        <div>
-          <div style={{ fontSize: 16, fontWeight: 700, color: th.text }}>
-            {reactorName}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: 8,
+          }}
+        >
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: th.text }}>
+              {reactorName}
+            </div>
+            {dataStale && (
+              <div
+                style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  color: th.warning,
+                  marginTop: 4,
+                }}
+              >
+                Idle - start readings
+              </div>
+            )}
           </div>
-          {dataStale && (
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
             <div
               style={{
-                fontSize: 11,
-                fontWeight: 600,
-                color: th.warning,
-                marginTop: 4,
+                width: 8,
+                height: 8,
+                borderRadius: "50%",
+                background: growthColor,
+              }}
+            />
+            <span
+              style={{
+                fontSize: 12,
+                color: th.textMuted,
+                fontFamily: "'JetBrains Mono',monospace",
               }}
             >
-              Idle - start readings
-            </div>
-          )}
+              GR:{" "}
+              {dataStale || growthRate == null || !Number.isFinite(growthRate)
+                ? "---"
+                : growthRate.toFixed(4)}
+            </span>
+          </div>
         </div>
-        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          <div
-            style={{
-              width: 8,
-              height: 8,
-              borderRadius: "50%",
-              background: growthColor,
-            }}
-          />
-          <span
-            style={{
-              fontSize: 12,
-              color: th.textMuted,
-              fontFamily: "'JetBrains Mono',monospace",
-            }}
-          >
-            GR:{" "}
-            {dataStale || growthRate == null || !Number.isFinite(growthRate)
-              ? "---"
-              : growthRate.toFixed(4)}
-          </span>
-        </div>
-      </div>
       )}
       <svg viewBox="0 0 200 220" style={{ width: "100%", maxHeight: 220 }}>
         {/* Vial body */}
@@ -2323,18 +2356,27 @@ export default function App() {
   const [startingExp, setStartingExp] = useState(false);
   const [startCfg, setStartCfg] = useState(() => {
     try {
-      const saved = JSON.parse(localStorage.getItem("pioreactor_start_cfg") || "null");
+      const saved = JSON.parse(
+        localStorage.getItem("pioreactor_start_cfg") || "null",
+      );
       return saved || { rpm: "400", temp: "30", od: true, growth: true };
     } catch {
       return { rpm: "400", temp: "30", od: true, growth: true };
     }
   });
   useEffect(() => {
-    try { localStorage.setItem("pioreactor_start_cfg", JSON.stringify(startCfg)); } catch {}
+    try {
+      localStorage.setItem("pioreactor_start_cfg", JSON.stringify(startCfg));
+    } catch {}
   }, [startCfg]);
 
   // Shared feedback modal: { open, title, message, tone: "success"|"error"|"info" }
-  const [feedback, setFeedback] = useState({ open: false, title: "", message: "", tone: "info" });
+  const [feedback, setFeedback] = useState({
+    open: false,
+    title: "",
+    message: "",
+    tone: "info",
+  });
   const showFeedback = (title, message, tone = "info") =>
     setFeedback({ open: true, title, message, tone });
 
@@ -2380,20 +2422,25 @@ export default function App() {
     if (experiment && connected) {
       const expEnc = encodeURIComponent(experiment.experiment);
       const onlineR = reactors.filter((r) => r.status === "online");
-      const jobMap = { media: "add_media", waste: "remove_waste", alt_media: "add_alt_media" };
+      const jobMap = {
+        media: "add_media",
+        waste: "remove_waste",
+        alt_media: "add_alt_media",
+      };
       const jobName = jobMap[manualPump] || "add_media";
       const results = await Promise.allSettled(
         onlineR.map(async (r) => {
           const url = buildApiUrl(
             `/api/workers/${encodeURIComponent(r.id)}/jobs/run/job_name/${jobName}/experiments/${expEnc}`,
           );
-          const doFetch = () => pioFetch(url, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              options: { ml: String(parseFloat(pumpVolume)) },
-            }),
-          });
+          const doFetch = () =>
+            pioFetch(url, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                options: { ml: String(parseFloat(pumpVolume)) },
+              }),
+            });
           addPumpLogEntry(`Calling: ${jobName} on ${r.id}`);
           let res = await doFetch();
           if (res.status === 404) {
@@ -2406,10 +2453,16 @@ export default function App() {
           return res;
         }),
       );
-      const ok = results.filter(r => r.status === "fulfilled" && r.value?.ok).length;
-      const failed = results.filter(r => r.status === "fulfilled" && !r.value?.ok).length;
+      const ok = results.filter(
+        (r) => r.status === "fulfilled" && r.value?.ok,
+      ).length;
+      const failed = results.filter(
+        (r) => r.status === "fulfilled" && !r.value?.ok,
+      ).length;
       if (failed > 0) {
-        addPumpLogEntry(`WARNING: ${failed}/${onlineR.length} failed - check worker assignment`);
+        addPumpLogEntry(
+          `WARNING: ${failed}/${onlineR.length} failed - check worker assignment`,
+        );
       } else {
         addPumpLogEntry(`Done: ${ok}/${onlineR.length} succeeded`);
       }
@@ -2430,7 +2483,9 @@ export default function App() {
       const section = "[dosing_automation.config]";
       const key = "waste_removal_multiplier";
       if (!ini.includes(section)) {
-        addPumpLogEntry("Config: dosing_automation.config section not found, skipping");
+        addPumpLogEntry(
+          "Config: dosing_automation.config section not found, skipping",
+        );
         return true;
       }
       const lines = ini.split("\n");
@@ -2444,13 +2499,18 @@ export default function App() {
         if (inSection && line.trim().startsWith(key)) {
           found = true;
           const currentVal = line.split("=")[1]?.trim();
-          if (currentVal === "1") { alreadyCorrect = true; return line; }
+          if (currentVal === "1") {
+            alreadyCorrect = true;
+            return line;
+          }
           return `${key}=1`;
         }
         return line;
       });
       if (!found || alreadyCorrect) return true;
-      addPumpLogEntry("Setting waste_removal_multiplier=1 in Pioreactor config...");
+      addPumpLogEntry(
+        "Setting waste_removal_multiplier=1 in Pioreactor config...",
+      );
       const patchRes = await pioFetch(buildApiUrl("/api/configs/config.ini"), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -2458,7 +2518,9 @@ export default function App() {
       });
       if (!patchRes.ok) {
         const errText = await patchRes.text();
-        addPumpLogEntry(`Config update failed: ${patchRes.status} — ${errText.slice(0, 200)}`);
+        addPumpLogEntry(
+          `Config update failed: ${patchRes.status} — ${errText.slice(0, 200)}`,
+        );
         return false;
       }
       addPumpLogEntry("Config updated — waste multiplier set to 1:1");
@@ -2515,12 +2577,20 @@ export default function App() {
   };
 
   const [stopping, setStopping] = useState({});
-  const [targetTemp, setTargetTemp] = useState(() => localStorage.getItem("pio_targetTemp") || "30");
-  const [targetRpm, setTargetRpm] = useState(() => localStorage.getItem("pio_targetRpm") || "400");
+  const [targetTemp, setTargetTemp] = useState(
+    () => localStorage.getItem("pio_targetTemp") || "30",
+  );
+  const [targetRpm, setTargetRpm] = useState(
+    () => localStorage.getItem("pio_targetRpm") || "400",
+  );
 
   // Persist settings
-  useEffect(() => { localStorage.setItem("pio_targetTemp", targetTemp); }, [targetTemp]);
-  useEffect(() => { localStorage.setItem("pio_targetRpm", targetRpm); }, [targetRpm]);
+  useEffect(() => {
+    localStorage.setItem("pio_targetTemp", targetTemp);
+  }, [targetTemp]);
+  useEffect(() => {
+    localStorage.setItem("pio_targetRpm", targetRpm);
+  }, [targetRpm]);
   const [runningJobs, setRunningJobs] = useState({});
   const manualJobOverride = useRef({}); // tracks recent button clicks
   const anyJobRunning = Object.values(runningJobs).some(Boolean);
@@ -2533,23 +2603,27 @@ export default function App() {
     const hasFreshData = (series) => {
       if (!series?.latestByKey) return false;
       return Object.values(series.latestByKey).some(
-        (v) => v?.ts && (now - v.ts) < FRESH_MS
+        (v) => v?.ts && now - v.ts < FRESH_MS,
       );
     };
     // Only auto-detect if user hasn't clicked a button in the last 15s
     const override = manualJobOverride.current;
     const use = (job, detected) => {
-      if (override[job] && (now - override[job]) < 15000) return; // skip, user just clicked
+      if (override[job] && now - override[job] < 15000) return; // skip, user just clicked
       return detected;
     };
     const odRunning = hasFreshData(odData);
     const tempRunning = hasFreshData(tempData);
     const grRunning = hasFreshData(growthData);
-    setRunningJobs(prev => ({
+    setRunningJobs((prev) => ({
       ...prev,
       od_reading: use("od_reading", odRunning) ?? prev.od_reading,
-      temperature_automation: use("temperature_automation", tempRunning) ?? prev.temperature_automation,
-      growth_rate_calculating: use("growth_rate_calculating", grRunning) ?? prev.growth_rate_calculating,
+      temperature_automation:
+        use("temperature_automation", tempRunning) ??
+        prev.temperature_automation,
+      growth_rate_calculating:
+        use("growth_rate_calculating", grRunning) ??
+        prev.growth_rate_calculating,
       stirring: use("stirring", odRunning) ?? prev.stirring,
     }));
   }, [connected, odData, tempData, growthData]);
@@ -2652,11 +2726,12 @@ export default function App() {
 
   const odP = {
     title: "Optical Density (OD)",
-    subtitle: !runningJobs.od_reading && chartLiveMode
-      ? "Not running"
-      : odData.data.length
-        ? `90° scatter · ${odData.data.length} readings${chartLiveMode ? " · Live" : ""}`
-        : "Waiting for data...",
+    subtitle:
+      !runningJobs.od_reading && chartLiveMode
+        ? "Not running"
+        : odData.data.length
+          ? `90° scatter · ${odData.data.length} readings${chartLiveMode ? " · Live" : ""}`
+          : "Waiting for data...",
     historicalMode: !chartLiveMode,
     data: odData.data,
     keys: odKeys,
@@ -2691,11 +2766,12 @@ export default function App() {
   };
   const tempP = {
     title: "Temperature (°C)",
-    subtitle: !runningJobs.temperature_automation && chartLiveMode
-      ? "Not running"
-      : tempData.data.length
-        ? `${tempData.data.length} readings${chartLiveMode ? " · Live" : ""}`
-        : "Waiting for data...",
+    subtitle:
+      !runningJobs.temperature_automation && chartLiveMode
+        ? "Not running"
+        : tempData.data.length
+          ? `${tempData.data.length} readings${chartLiveMode ? " · Live" : ""}`
+          : "Waiting for data...",
     historicalMode: !chartLiveMode,
     data: tempData.data,
     keys: tempKeys,
@@ -2730,24 +2806,40 @@ export default function App() {
         ? () => handleStopJob("temperature_automation")
         : undefined,
     stopLabel: stopping.temperature_automation ? "Stopping..." : "■ Stop Temp",
-    onStartAction: connected ? () => handleStartJob("temperature_automation", { automation_name: "thermostat", target_temperature: parseFloat(targetTemp) }) : undefined,
-    startLabel: starting.temperature_automation ? "Starting..." : `▶ Start ${targetTemp}°C`,
+    onStartAction: connected
+      ? () =>
+          handleStartJob("temperature_automation", {
+            automation_name: "thermostat",
+            target_temperature: parseFloat(targetTemp),
+          })
+      : undefined,
+    startLabel: starting.temperature_automation
+      ? "Starting..."
+      : `▶ Start ${targetTemp}°C`,
     isRunning: !!runningJobs.temperature_automation,
     headerExtra: (
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        <label style={{ fontSize: 13, fontWeight: 600, color: th.textMuted }}>Target</label>
+        <label style={{ fontSize: 13, fontWeight: 600, color: th.textMuted }}>
+          Target
+        </label>
         <input
           type="number"
           value={targetTemp}
-          onChange={e => setTargetTemp(e.target.value)}
+          onChange={(e) => setTargetTemp(e.target.value)}
           step="0.5"
           min="20"
           max="50"
           style={{
-            width: 60, padding: "5px 8px", borderRadius: 6,
-            border: `1px solid ${th.border}`, background: th.bgAlt,
-            color: th.text, fontSize: 14, fontFamily: "'JetBrains Mono',monospace",
-            textAlign: "center", outline: "none",
+            width: 60,
+            padding: "5px 8px",
+            borderRadius: 6,
+            border: `1px solid ${th.border}`,
+            background: th.bgAlt,
+            color: th.text,
+            fontSize: 14,
+            fontFamily: "'JetBrains Mono',monospace",
+            textAlign: "center",
+            outline: "none",
           }}
         />
         <span style={{ fontSize: 13, color: th.textMuted }}>°C</span>
@@ -2755,18 +2847,35 @@ export default function App() {
           <button
             onClick={() => {
               const expEnc = encodeURIComponent(experiment.experiment);
-              reactors.filter(r => r.status === "online").forEach(r => {
-                pioFetch(buildApiUrl(`/api/workers/${encodeURIComponent(r.id)}/jobs/update/job_name/temperature_automation/experiments/${expEnc}`), {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ settings: { target_temperature: parseFloat(targetTemp) } }),
+              reactors
+                .filter((r) => r.status === "online")
+                .forEach((r) => {
+                  pioFetch(
+                    buildApiUrl(
+                      `/api/workers/${encodeURIComponent(r.id)}/jobs/update/job_name/temperature_automation/experiments/${expEnc}`,
+                    ),
+                    {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        settings: {
+                          target_temperature: parseFloat(targetTemp),
+                        },
+                      }),
+                    },
+                  );
                 });
-              });
             }}
             style={{
-              padding: "5px 10px", borderRadius: 6, border: `1px solid ${th.accent}40`,
-              background: th.accentLight, color: th.accent, fontSize: 13,
-              fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+              padding: "5px 10px",
+              borderRadius: 6,
+              border: `1px solid ${th.accent}40`,
+              background: th.accentLight,
+              color: th.accent,
+              fontSize: 13,
+              fontWeight: 700,
+              cursor: "pointer",
+              fontFamily: "inherit",
             }}
           >
             Set
@@ -2777,11 +2886,12 @@ export default function App() {
   };
   const grP = {
     title: "Growth Rate",
-    subtitle: !runningJobs.growth_rate_calculating && chartLiveMode
-      ? "Not running"
-      : growthData.data.length
-        ? `${growthData.data.length} readings${chartLiveMode ? " · Live" : ""}`
-        : "Waiting for data...",
+    subtitle:
+      !runningJobs.growth_rate_calculating && chartLiveMode
+        ? "Not running"
+        : growthData.data.length
+          ? `${growthData.data.length} readings${chartLiveMode ? " · Live" : ""}`
+          : "Waiting for data...",
     historicalMode: !chartLiveMode,
     data: growthData.data,
     keys: growthKeys,
@@ -2815,7 +2925,9 @@ export default function App() {
         ? () => handleStopJob("growth_rate_calculating")
         : undefined,
     stopLabel: stopping.growth_rate_calculating ? "Stopping..." : "■ Stop GR",
-    onStartAction: connected ? () => handleStartJob("growth_rate_calculating") : undefined,
+    onStartAction: connected
+      ? () => handleStartJob("growth_rate_calculating")
+      : undefined,
     startLabel: starting.growth_rate_calculating ? "Starting..." : "▶ Start GR",
     isRunning: !!runningJobs.growth_rate_calculating,
   };
@@ -3254,7 +3366,14 @@ export default function App() {
               {nav.find((n) => n.id === page)?.label || "Overview"}
             </h1>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              flexWrap: "wrap",
+            }}
+          >
             <select
               value={experiment?.experiment || ""}
               onChange={(e) => selectExperiment(e.target.value)}
@@ -3325,7 +3444,14 @@ export default function App() {
         </div>
 
         {page === "overview" && (
-          <div style={{ padding: typeof window !== "undefined" && window.innerWidth < 768 ? "12px" : "24px" }}>
+          <div
+            style={{
+              padding:
+                typeof window !== "undefined" && window.innerWidth < 768
+                  ? "12px"
+                  : "24px",
+            }}
+          >
             {/* Experiment Selector Bar */}
             <div
               style={{
@@ -3400,7 +3526,11 @@ export default function App() {
                   fontFamily: "inherit",
                   opacity: anyJobRunning ? 0.7 : 1,
                 }}
-                title={anyJobRunning ? "Stop the current experiment before starting a new one" : ""}
+                title={
+                  anyJobRunning
+                    ? "Stop the current experiment before starting a new one"
+                    : ""
+                }
               >
                 + New Experiment
               </button>
@@ -3419,13 +3549,23 @@ export default function App() {
                   }}
                   disabled={!experiment || !connected}
                   style={{
-                    padding: "6px 14px", borderRadius: 7, fontSize: 13, fontWeight: 700, fontFamily: "inherit",
-                    background: th.dangerBg, border: `1px solid ${th.danger}40`, color: th.danger,
-                    cursor: (!experiment || !connected) ? "not-allowed" : "pointer", marginLeft: "auto",
-                    opacity: (!experiment || !connected) ? 0.5 : 1,
+                    padding: "6px 14px",
+                    borderRadius: 7,
+                    fontSize: 13,
+                    fontWeight: 700,
+                    fontFamily: "inherit",
+                    background: th.dangerBg,
+                    border: `1px solid ${th.danger}40`,
+                    color: th.danger,
+                    cursor:
+                      !experiment || !connected ? "not-allowed" : "pointer",
+                    marginLeft: "auto",
+                    opacity: !experiment || !connected ? 0.5 : 1,
                   }}
                   title="Stop all jobs on this experiment"
-                >■ Stop Experiment</button>
+                >
+                  ■ Stop Experiment
+                </button>
               ) : (
                 <button
                   onClick={() => {
@@ -3434,42 +3574,79 @@ export default function App() {
                   }}
                   disabled={!experiment || !connected}
                   style={{
-                    padding: "6px 14px", borderRadius: 7, fontSize: 13, fontWeight: 700, fontFamily: "inherit",
-                    background: `${th.success}15`, border: `1px solid ${th.success}50`, color: th.success,
-                    cursor: (!experiment || !connected) ? "not-allowed" : "pointer", marginLeft: "auto",
-                    opacity: (!experiment || !connected) ? 0.5 : 1,
+                    padding: "6px 14px",
+                    borderRadius: 7,
+                    fontSize: 13,
+                    fontWeight: 700,
+                    fontFamily: "inherit",
+                    background: `${th.success}15`,
+                    border: `1px solid ${th.success}50`,
+                    color: th.success,
+                    cursor:
+                      !experiment || !connected ? "not-allowed" : "pointer",
+                    marginLeft: "auto",
+                    opacity: !experiment || !connected ? 0.5 : 1,
                   }}
                   title="Configure and start this experiment"
-                >▶ Start Experiment</button>
+                >
+                  ▶ Start Experiment
+                </button>
               )}
               <button
                 onClick={async () => {
                   if (!experiment) return;
-                  if (!confirm(`Delete "${experiment.experiment}"? This stops all jobs and removes all data for this experiment.`)) return;
+                  if (
+                    !confirm(
+                      `Delete "${experiment.experiment}"? This stops all jobs and removes all data for this experiment.`,
+                    )
+                  )
+                    return;
                   const expName = experiment.experiment;
                   try {
                     const res = await pioFetch(
-                      buildApiUrl(`/api/experiments/${encodeURIComponent(expName)}`),
+                      buildApiUrl(
+                        `/api/experiments/${encodeURIComponent(expName)}`,
+                      ),
                       { method: "DELETE" },
                     );
                     setTimeout(refresh, 500);
                     if (res.ok) {
-                      showFeedback("Experiment deleted", `"${expName}" was removed.`, "success");
+                      showFeedback(
+                        "Experiment deleted",
+                        `"${expName}" was removed.`,
+                        "success",
+                      );
                     } else {
-                      showFeedback("Could not delete experiment", `API error ${res.status}.`, "error");
+                      showFeedback(
+                        "Could not delete experiment",
+                        `API error ${res.status}.`,
+                        "error",
+                      );
                     }
                   } catch (e) {
-                    showFeedback("Could not delete experiment", e.message || "Network error.", "error");
+                    showFeedback(
+                      "Could not delete experiment",
+                      e.message || "Network error.",
+                      "error",
+                    );
                   }
                 }}
                 disabled={!experiment}
                 style={{
-                  padding: "4px 10px", borderRadius: 6, fontSize: 12, fontWeight: 600, fontFamily: "inherit",
-                  background: th.dangerBg, border: `1px solid ${th.danger}30`, color: th.danger,
+                  padding: "4px 10px",
+                  borderRadius: 6,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  fontFamily: "inherit",
+                  background: th.dangerBg,
+                  border: `1px solid ${th.danger}30`,
+                  color: th.danger,
                   cursor: !experiment ? "not-allowed" : "pointer",
                   opacity: !experiment ? 0.5 : 1,
                 }}
-              >Delete Experiment</button>
+              >
+                Delete Experiment
+              </button>
             </div>
 
             <TimeRangeBar
@@ -3588,24 +3765,41 @@ export default function App() {
                       {r.model}
                     </span>
                   </div>
-                  {r.status !== "offline" && (() => {
-                    const tel = telemetryByReactor[r.id];
-                    const stale = chartLiveMode && (!tel || !tel.isLive);
-                    return (
-                      <div style={{ margin: "8px 0" }}>
-                        <AnimatedVial
-                          th={th}
-                          reactorName=""
-                          odValue={tel?.od != null && Number.isFinite(tel.od) ? tel.od : null}
-                          tempValue={tel?.temp != null && Number.isFinite(tel.temp) ? tel.temp : null}
-                          stirringRpm={runningJobs.stirring ? parseInt(targetRpm) || 400 : 0}
-                          growthRate={tel?.growth != null && Number.isFinite(tel.growth) ? tel.growth : undefined}
-                          pumpActive={false}
-                          dataStale={stale}
-                        />
-                      </div>
-                    );
-                  })()}
+                  {r.status !== "offline" &&
+                    (() => {
+                      const tel = telemetryByReactor[r.id];
+                      const stale = chartLiveMode && (!tel || !tel.isLive);
+                      return (
+                        <div style={{ margin: "8px 0" }}>
+                          <AnimatedVial
+                            th={th}
+                            reactorName=""
+                            odValue={
+                              tel?.od != null && Number.isFinite(tel.od)
+                                ? tel.od
+                                : null
+                            }
+                            tempValue={
+                              tel?.temp != null && Number.isFinite(tel.temp)
+                                ? tel.temp
+                                : null
+                            }
+                            stirringRpm={
+                              runningJobs.stirring
+                                ? parseInt(targetRpm) || 400
+                                : 0
+                            }
+                            growthRate={
+                              tel?.growth != null && Number.isFinite(tel.growth)
+                                ? tel.growth
+                                : undefined
+                            }
+                            pumpActive={false}
+                            dataStale={stale}
+                          />
+                        </div>
+                      );
+                    })()}
                   <div
                     style={{
                       fontFamily: "'JetBrains Mono',monospace",
@@ -3672,11 +3866,10 @@ export default function App() {
               <div>
                 <p style={{ margin: 0, fontSize: 17, color: th.textSecondary }}>
                   {reactors.length} bioreactors ·{" "}
-                  {chartLiveMode
-                    ? `${streamingCount} streaming · `
-                    : ""}
+                  {chartLiveMode ? `${streamingCount} streaming · ` : ""}
                   {online} connected ·{" "}
-                  {reactors.filter((r) => r.status === "offline").length} excluded
+                  {reactors.filter((r) => r.status === "offline").length}{" "}
+                  excluded
                 </p>
               </div>
               <button
@@ -4858,9 +5051,17 @@ export default function App() {
                     setShowNewExp(false);
                     setNewExpName("");
                     setNewExpDesc("");
-                    showFeedback("Experiment created", `"${name}" is now active.`, "success");
+                    showFeedback(
+                      "Experiment created",
+                      `"${name}" is now active.`,
+                      "success",
+                    );
                   } else {
-                    showFeedback("Could not create experiment", res.error || "Unknown error.", "error");
+                    showFeedback(
+                      "Could not create experiment",
+                      res.error || "Unknown error.",
+                      "error",
+                    );
                   }
                 }}
                 disabled={creatingExp || !newExpName.trim()}
@@ -4905,67 +5106,160 @@ export default function App() {
       {showStartExp && (
         <div
           style={{
-            position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 1000,
-            display: "flex", alignItems: "center", justifyContent: "center",
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.4)",
+            zIndex: 1000,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
           }}
           onClick={() => !startingExp && setShowStartExp(false)}
         >
           <div
             style={{
-              background: th.surface, borderRadius: 16, padding: "24px 28px",
-              width: 440, maxWidth: "90vw", boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
+              background: th.surface,
+              borderRadius: 16,
+              padding: "24px 28px",
+              width: 440,
+              maxWidth: "90vw",
+              boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 style={{ margin: "0 0 6px", fontSize: 20, fontWeight: 700, color: th.text }}>
+            <h2
+              style={{
+                margin: "0 0 6px",
+                fontSize: 20,
+                fontWeight: 700,
+                color: th.text,
+              }}
+            >
               Start experiment
             </h2>
-            <p style={{ margin: "0 0 18px", fontSize: 13, color: th.textMuted, lineHeight: 1.5 }}>
-              Configure the run, then press Start. Jobs begin in order: stirring → temperature → OD → growth rate.
+            <p
+              style={{
+                margin: "0 0 18px",
+                fontSize: 13,
+                color: th.textMuted,
+                lineHeight: 1.5,
+              }}
+            >
+              Configure the run, then press Start. Jobs begin in order: stirring
+              → temperature → OD → growth rate.
             </p>
 
-            <label style={{ fontSize: 13, fontWeight: 600, color: th.textSecondary, display: "block", marginBottom: 6 }}>
+            <label
+              style={{
+                fontSize: 13,
+                fontWeight: 600,
+                color: th.textSecondary,
+                display: "block",
+                marginBottom: 6,
+              }}
+            >
               Stirring (RPM)
             </label>
             <input
-              type="number" step="50" min="0" max="1200"
+              type="number"
+              step="50"
+              min="0"
+              max="1200"
               value={startCfg.rpm}
-              onChange={(e) => setStartCfg((c) => ({ ...c, rpm: e.target.value }))}
+              onChange={(e) =>
+                setStartCfg((c) => ({ ...c, rpm: e.target.value }))
+              }
               style={{
-                width: "100%", padding: "9px 12px", borderRadius: 8,
-                border: `1px solid ${th.border}`, background: th.bgAlt,
-                color: th.text, fontSize: 15, fontFamily: "'JetBrains Mono',monospace",
-                outline: "none", marginBottom: 14,
+                width: "100%",
+                padding: "9px 12px",
+                borderRadius: 8,
+                border: `1px solid ${th.border}`,
+                background: th.bgAlt,
+                color: th.text,
+                fontSize: 15,
+                fontFamily: "'JetBrains Mono',monospace",
+                outline: "none",
+                marginBottom: 14,
               }}
             />
 
-            <label style={{ fontSize: 13, fontWeight: 600, color: th.textSecondary, display: "block", marginBottom: 6 }}>
-              Target Temperature (°C) — thermostat
+            <label
+              style={{
+                fontSize: 13,
+                fontWeight: 600,
+                color: th.textSecondary,
+                display: "block",
+                marginBottom: 6,
+              }}
+            >
+              Target Temperature (°C) - thermostat
             </label>
             <input
-              type="number" step="0.5" min="20" max="50"
+              type="number"
+              step="0.5"
+              min="20"
+              max="50"
               value={startCfg.temp}
-              onChange={(e) => setStartCfg((c) => ({ ...c, temp: e.target.value }))}
+              onChange={(e) =>
+                setStartCfg((c) => ({ ...c, temp: e.target.value }))
+              }
               style={{
-                width: "100%", padding: "9px 12px", borderRadius: 8,
-                border: `1px solid ${th.border}`, background: th.bgAlt,
-                color: th.text, fontSize: 15, fontFamily: "'JetBrains Mono',monospace",
-                outline: "none", marginBottom: 16,
+                width: "100%",
+                padding: "9px 12px",
+                borderRadius: 8,
+                border: `1px solid ${th.border}`,
+                background: th.bgAlt,
+                color: th.text,
+                fontSize: 15,
+                fontFamily: "'JetBrains Mono',monospace",
+                outline: "none",
+                marginBottom: 16,
               }}
             />
 
-            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
-              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, color: th.text, cursor: "pointer" }}>
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+                marginBottom: 20,
+              }}
+            >
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  fontSize: 14,
+                  color: th.text,
+                  cursor: "pointer",
+                }}
+              >
                 <input
-                  type="checkbox" checked={startCfg.od}
-                  onChange={(e) => setStartCfg((c) => ({ ...c, od: e.target.checked }))}
+                  type="checkbox"
+                  checked={startCfg.od}
+                  onChange={(e) =>
+                    setStartCfg((c) => ({ ...c, od: e.target.checked }))
+                  }
                 />
                 Start OD Reading
               </label>
-              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, color: th.text, cursor: "pointer" }}>
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  fontSize: 14,
+                  color: th.text,
+                  cursor: "pointer",
+                }}
+              >
                 <input
-                  type="checkbox" checked={startCfg.growth}
-                  onChange={(e) => setStartCfg((c) => ({ ...c, growth: e.target.checked }))}
+                  type="checkbox"
+                  checked={startCfg.growth}
+                  onChange={(e) =>
+                    setStartCfg((c) => ({ ...c, growth: e.target.checked }))
+                  }
                 />
                 Calculate Growth Rate
               </label>
@@ -4979,18 +5273,38 @@ export default function App() {
                   setStartingExp(false);
                   setShowStartExp(false);
                   if (res.success && !res.partial) {
-                    showFeedback("Experiment started", `Running on ${experiment?.experiment}.`, "success");
+                    showFeedback(
+                      "Experiment started",
+                      `Running on ${experiment?.experiment}.`,
+                      "success",
+                    );
                   } else if (res.success && res.partial) {
-                    showFeedback("Experiment started with issues", res.error || "Some jobs failed to start.", "error");
+                    showFeedback(
+                      "Experiment started with issues",
+                      res.error || "Some jobs failed to start.",
+                      "error",
+                    );
                   } else {
-                    showFeedback("Could not start experiment", res.error || "Unknown error.", "error");
+                    showFeedback(
+                      "Could not start experiment",
+                      res.error || "Unknown error.",
+                      "error",
+                    );
                   }
                 }}
                 disabled={startingExp || !startCfg.rpm || !startCfg.temp}
                 style={{
-                  flex: 1, padding: "11px", borderRadius: 10, border: "none",
-                  background: th.success, color: "#fff", fontWeight: 700, fontSize: 15,
-                  cursor: "pointer", fontFamily: "inherit", opacity: startingExp ? 0.6 : 1,
+                  flex: 1,
+                  padding: "11px",
+                  borderRadius: 10,
+                  border: "none",
+                  background: th.success,
+                  color: "#fff",
+                  fontWeight: 700,
+                  fontSize: 15,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  opacity: startingExp ? 0.6 : 1,
                 }}
               >
                 {startingExp ? "Starting..." : "▶ Start"}
@@ -4999,9 +5313,15 @@ export default function App() {
                 onClick={() => setShowStartExp(false)}
                 disabled={startingExp}
                 style={{
-                  padding: "11px 18px", borderRadius: 10, border: `1px solid ${th.border}`,
-                  background: "transparent", color: th.textSecondary, fontWeight: 600, fontSize: 15,
-                  cursor: "pointer", fontFamily: "inherit",
+                  padding: "11px 18px",
+                  borderRadius: 10,
+                  border: `1px solid ${th.border}`,
+                  background: "transparent",
+                  color: th.textSecondary,
+                  fontWeight: 600,
+                  fontSize: 15,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
                 }}
               >
                 Cancel
@@ -5015,24 +5335,51 @@ export default function App() {
       {showStopExp && (
         <div
           style={{
-            position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 1000,
-            display: "flex", alignItems: "center", justifyContent: "center",
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.4)",
+            zIndex: 1000,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
           }}
           onClick={() => !stoppingExp && setShowStopExp(false)}
         >
           <div
             style={{
-              background: th.surface, borderRadius: 16, padding: "24px 28px",
-              width: 420, maxWidth: "90vw", boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
+              background: th.surface,
+              borderRadius: 16,
+              padding: "24px 28px",
+              width: 420,
+              maxWidth: "90vw",
+              boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 style={{ margin: "0 0 10px", fontSize: 20, fontWeight: 700, color: th.text }}>
+            <h2
+              style={{
+                margin: "0 0 10px",
+                fontSize: 20,
+                fontWeight: 700,
+                color: th.text,
+              }}
+            >
               Stop experiment?
             </h2>
-            <p style={{ margin: "0 0 20px", fontSize: 14, color: th.textSecondary, lineHeight: 1.5 }}>
-              This stops all jobs (stirring, OD, temperature, growth rate, dosing) on every reactor assigned to{" "}
-              <strong style={{ color: th.text }}>{experiment?.experiment}</strong>. Data is kept.
+            <p
+              style={{
+                margin: "0 0 20px",
+                fontSize: 14,
+                color: th.textSecondary,
+                lineHeight: 1.5,
+              }}
+            >
+              This stops all jobs (stirring, OD, temperature, growth rate,
+              dosing) on every reactor assigned to{" "}
+              <strong style={{ color: th.text }}>
+                {experiment?.experiment}
+              </strong>
+              . Data is kept.
             </p>
             <div style={{ display: "flex", gap: 10 }}>
               <button
@@ -5057,16 +5404,32 @@ export default function App() {
                       manualJobOverride.current[j] = now;
                     });
                     setRunningJobs({});
-                    showFeedback("Experiment stopped", `All jobs stopped on ${experiment?.experiment}.`, "success");
+                    showFeedback(
+                      "Experiment stopped",
+                      `All jobs stopped on ${experiment?.experiment}.`,
+                      "success",
+                    );
                   } else {
-                    showFeedback("Could not stop experiment", res.error || "Unknown error.", "error");
+                    showFeedback(
+                      "Could not stop experiment",
+                      res.error || "Unknown error.",
+                      "error",
+                    );
                   }
                 }}
                 disabled={stoppingExp}
                 style={{
-                  flex: 1, padding: "11px", borderRadius: 10, border: "none",
-                  background: th.danger, color: "#fff", fontWeight: 700, fontSize: 15,
-                  cursor: "pointer", fontFamily: "inherit", opacity: stoppingExp ? 0.6 : 1,
+                  flex: 1,
+                  padding: "11px",
+                  borderRadius: 10,
+                  border: "none",
+                  background: th.danger,
+                  color: "#fff",
+                  fontWeight: 700,
+                  fontSize: 15,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  opacity: stoppingExp ? 0.6 : 1,
                 }}
               >
                 {stoppingExp ? "Stopping..." : "Stop experiment"}
@@ -5075,9 +5438,15 @@ export default function App() {
                 onClick={() => setShowStopExp(false)}
                 disabled={stoppingExp}
                 style={{
-                  padding: "11px 18px", borderRadius: 10, border: `1px solid ${th.border}`,
-                  background: "transparent", color: th.textSecondary, fontWeight: 600, fontSize: 15,
-                  cursor: "pointer", fontFamily: "inherit",
+                  padding: "11px 18px",
+                  borderRadius: 10,
+                  border: `1px solid ${th.border}`,
+                  background: "transparent",
+                  color: th.textSecondary,
+                  fontWeight: 600,
+                  fontSize: 15,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
                 }}
               >
                 Cancel
@@ -5091,35 +5460,68 @@ export default function App() {
       {feedback.open && (
         <div
           style={{
-            position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 1100,
-            display: "flex", alignItems: "center", justifyContent: "center",
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.4)",
+            zIndex: 1100,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
           }}
           onClick={() => setFeedback((f) => ({ ...f, open: false }))}
         >
           <div
             style={{
-              background: th.surface, borderRadius: 16, padding: "24px 28px",
-              width: 400, maxWidth: "90vw", boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
+              background: th.surface,
+              borderRadius: 16,
+              padding: "24px 28px",
+              width: 400,
+              maxWidth: "90vw",
+              boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
               borderTop: `3px solid ${
-                feedback.tone === "success" ? th.success :
-                feedback.tone === "error" ? th.danger : th.accent
+                feedback.tone === "success"
+                  ? th.success
+                  : feedback.tone === "error"
+                    ? th.danger
+                    : th.accent
               }`,
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 style={{ margin: "0 0 10px", fontSize: 18, fontWeight: 700, color: th.text }}>
+            <h2
+              style={{
+                margin: "0 0 10px",
+                fontSize: 18,
+                fontWeight: 700,
+                color: th.text,
+              }}
+            >
               {feedback.title}
             </h2>
-            <p style={{ margin: "0 0 20px", fontSize: 14, color: th.textSecondary, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
+            <p
+              style={{
+                margin: "0 0 20px",
+                fontSize: 14,
+                color: th.textSecondary,
+                lineHeight: 1.5,
+                whiteSpace: "pre-wrap",
+              }}
+            >
               {feedback.message}
             </p>
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <button
                 onClick={() => setFeedback((f) => ({ ...f, open: false }))}
                 style={{
-                  padding: "9px 22px", borderRadius: 8, border: "none",
-                  background: th.accent, color: "#fff", fontWeight: 700, fontSize: 14,
-                  cursor: "pointer", fontFamily: "inherit",
+                  padding: "9px 22px",
+                  borderRadius: 8,
+                  border: "none",
+                  background: th.accent,
+                  color: "#fff",
+                  fontWeight: 700,
+                  fontSize: 14,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
                 }}
               >
                 OK
