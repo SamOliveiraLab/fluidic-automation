@@ -659,6 +659,28 @@ const usePioreactorData = () => {
     };
   };
 
+  // Start a single job on ONE specific worker with its own options. Used to give
+  // each reactor different settings (e.g. temperature/RPM) at experiment start.
+  const startReactorJob = async (unitId, jobName, options = {}) => {
+    if (!experiment) return false;
+    const expEnc = encodeURIComponent(experiment.experiment);
+    try {
+      const res = await pioFetch(
+        buildApiUrl(
+          `/api/workers/${encodeURIComponent(unitId)}/jobs/run/job_name/${jobName}/experiments/${expEnc}`,
+        ),
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ options }),
+        },
+      );
+      return !!(res && res.ok);
+    } catch {
+      return false;
+    }
+  };
+
   // Stop a job on all online workers
   // Official Pioreactor API: POST /api/workers/{unit}/jobs/stop/job_name/{job}/experiments/{exp}
   const stopJob = async (jobName) => {
@@ -839,6 +861,7 @@ const usePioreactorData = () => {
     removeReactor,
     toggleStatus,
     startJob,
+    startReactorJob,
     stopJob,
     stopExperiment,
     selectExperiment,
@@ -2438,6 +2461,7 @@ export default function App() {
     stopExperiment,
     selectExperiment,
     createExperiment,
+    startReactorJob,
     assignReactor,
     unassignReactor,
     logs,
@@ -2502,6 +2526,23 @@ export default function App() {
       localStorage.setItem("pioreactor_start_cfg", JSON.stringify(startCfg));
     } catch {}
   }, [startCfg]);
+  // Per-reactor Temp/RPM overrides for the start dialog (different cultures may
+  // want different setpoints). Keyed by reactor id; seeded from startCfg defaults.
+  const [perReactorCfg, setPerReactorCfg] = useState({});
+  useEffect(() => {
+    if (!showStartExp) return;
+    setPerReactorCfg((prev) => {
+      const next = { ...prev };
+      reactors
+        .filter((r) => r.status === "online")
+        .forEach((r) => {
+          if (!next[r.id])
+            next[r.id] = { temp: startCfg.temp, rpm: startCfg.rpm };
+        });
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showStartExp]);
 
   // Shared feedback modal: { open, title, message, tone: "success"|"error"|"info" }
   const [feedback, setFeedback] = useState({
@@ -2855,32 +2896,57 @@ export default function App() {
 
   // Start the configured experiment: stirring → temperature → OD → growth rate.
   // Each job depends on the previous; small delays let Pioreactor settle.
-  const handleStartExperiment = async (cfg) => {
+  // Start the experiment with per-reactor settings. Each online (assigned)
+  // reactor gets its own Temperature/RPM (from perCfg, falling back to the
+  // global defaults). OD and Growth are global on/off toggles.
+  const handleStartExperiment = async (globalCfg, perCfg = {}) => {
     if (!experiment) return { success: false, error: "No active experiment" };
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const targets = reactors.filter((r) => r.status === "online");
+    if (!targets.length)
+      return { success: false, error: "No assigned bioreactors" };
+
+    const settingsFor = (r) => {
+      const c = perCfg[r.id] || {};
+      return {
+        rpm: parseFloat(c.rpm ?? globalCfg.rpm),
+        temp: parseFloat(c.temp ?? globalCfg.temp),
+      };
+    };
     const steps = [];
-    const rpm = parseFloat(cfg.rpm);
-    const temp = parseFloat(cfg.temp);
+    const labelOf = (r) => getCultureLabel(r.id) || r.label;
 
-    const stir = await startJob("stirring", { target_rpm: String(rpm) });
-    steps.push({ name: "Stirring", ...stir });
-    await sleep(2000);
-
-    const tempRes = await startJob("temperature_automation", {
-      automation_name: "thermostat",
-      target_temperature: temp,
-    });
-    steps.push({ name: "Temperature", ...tempRes });
-    await sleep(2000);
-
-    if (cfg.od) {
-      const odRes = await startJob("od_reading", {});
-      steps.push({ name: "OD Reading", ...odRes });
-      await sleep(2000);
+    // Stirring (per reactor)
+    for (const r of targets) {
+      const ok = await startReactorJob(r.id, "stirring", {
+        target_rpm: String(settingsFor(r).rpm),
+      });
+      steps.push({ name: `${labelOf(r)} · stirring`, success: ok });
     }
-    if (cfg.growth) {
-      const grRes = await startJob("growth_rate_calculating", {});
-      steps.push({ name: "Growth Rate", ...grRes });
+    await sleep(1500);
+
+    // Temperature thermostat (per reactor)
+    for (const r of targets) {
+      const ok = await startReactorJob(r.id, "temperature_automation", {
+        automation_name: "thermostat",
+        target_temperature: settingsFor(r).temp,
+      });
+      steps.push({ name: `${labelOf(r)} · temperature`, success: ok });
+    }
+    await sleep(1500);
+
+    if (globalCfg.od) {
+      for (const r of targets) {
+        const ok = await startReactorJob(r.id, "od_reading", {});
+        steps.push({ name: `${labelOf(r)} · OD`, success: ok });
+      }
+      await sleep(1500);
+    }
+    if (globalCfg.growth) {
+      for (const r of targets) {
+        const ok = await startReactorJob(r.id, "growth_rate_calculating", {});
+        steps.push({ name: `${labelOf(r)} · growth`, success: ok });
+      }
     }
 
     // Optimistically mark running so charts flip to the chart view immediately.
@@ -2891,15 +2957,16 @@ export default function App() {
     };
     manualJobOverride.current.stirring = now;
     manualJobOverride.current.temperature_automation = now;
-    if (cfg.od) {
+    if (globalCfg.od) {
       nextRunning.od_reading = true;
       manualJobOverride.current.od_reading = now;
     }
-    if (cfg.growth) {
+    if (globalCfg.growth) {
       nextRunning.growth_rate_calculating = true;
       manualJobOverride.current.growth_rate_calculating = now;
     }
     setRunningJobs((prev) => ({ ...prev, ...nextRunning }));
+    setTimeout(refresh, 3000);
 
     const failed = steps.filter((s) => !s.success);
     if (!failed.length) return { success: true, steps };
@@ -2907,7 +2974,9 @@ export default function App() {
       success: steps.some((s) => s.success),
       partial: true,
       steps,
-      error: failed.map((f) => `${f.name}: ${f.error || "failed"}`).join(", "),
+      error: `${failed.length} job(s) failed: ${failed
+        .map((f) => f.name)
+        .join(", ")}`,
     };
   };
 
@@ -5536,8 +5605,10 @@ export default function App() {
               background: th.surface,
               borderRadius: 16,
               padding: "24px 28px",
-              width: 440,
+              width: 460,
               maxWidth: "90vw",
+              maxHeight: "88vh",
+              overflowY: "auto",
               boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
             }}
             onClick={(e) => e.stopPropagation()}
@@ -5564,80 +5635,112 @@ export default function App() {
               → temperature → OD → growth rate.
             </p>
 
-            <label
-              style={{
-                fontSize: 13,
-                fontWeight: 600,
-                color: th.textSecondary,
-                display: "block",
-                marginBottom: 6,
-              }}
-            >
-              Stirring (RPM)
-            </label>
-            <input
-              type="number"
-              step="50"
-              min="0"
-              max="1200"
-              value={startCfg.rpm}
-              onChange={(e) =>
-                setStartCfg((c) => ({ ...c, rpm: e.target.value }))
+            {/* Default setpoints (applied to all unless overridden per reactor) */}
+            <div style={{ display: "flex", gap: 12, marginBottom: 8 }}>
+              <div style={{ flex: 1 }}>
+                <label
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 600,
+                    color: th.textSecondary,
+                    display: "block",
+                    marginBottom: 6,
+                  }}
+                >
+                  Default Stirring (RPM)
+                </label>
+                <input
+                  type="number"
+                  step="50"
+                  min="0"
+                  max="1200"
+                  value={startCfg.rpm}
+                  onChange={(e) =>
+                    setStartCfg((c) => ({ ...c, rpm: e.target.value }))
+                  }
+                  style={{
+                    width: "100%",
+                    padding: "9px 12px",
+                    borderRadius: 8,
+                    border: `1px solid ${th.border}`,
+                    background: th.bgAlt,
+                    color: th.text,
+                    fontSize: 15,
+                    fontFamily: "'JetBrains Mono',monospace",
+                    outline: "none",
+                    boxSizing: "border-box",
+                  }}
+                />
+              </div>
+              <div style={{ flex: 1 }}>
+                <label
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 600,
+                    color: th.textSecondary,
+                    display: "block",
+                    marginBottom: 6,
+                  }}
+                >
+                  Default Temp (°C)
+                </label>
+                <input
+                  type="number"
+                  step="0.5"
+                  min="20"
+                  max="50"
+                  value={startCfg.temp}
+                  onChange={(e) =>
+                    setStartCfg((c) => ({ ...c, temp: e.target.value }))
+                  }
+                  style={{
+                    width: "100%",
+                    padding: "9px 12px",
+                    borderRadius: 8,
+                    border: `1px solid ${th.border}`,
+                    background: th.bgAlt,
+                    color: th.text,
+                    fontSize: 15,
+                    fontFamily: "'JetBrains Mono',monospace",
+                    outline: "none",
+                    boxSizing: "border-box",
+                  }}
+                />
+              </div>
+            </div>
+            <button
+              onClick={() =>
+                setPerReactorCfg((prev) => {
+                  const next = { ...prev };
+                  reactors
+                    .filter((r) => r.status === "online")
+                    .forEach((r) => {
+                      next[r.id] = { temp: startCfg.temp, rpm: startCfg.rpm };
+                    });
+                  return next;
+                })
               }
               style={{
-                width: "100%",
-                padding: "9px 12px",
-                borderRadius: 8,
-                border: `1px solid ${th.border}`,
-                background: th.bgAlt,
-                color: th.text,
-                fontSize: 15,
-                fontFamily: "'JetBrains Mono',monospace",
-                outline: "none",
-                marginBottom: 14,
-              }}
-            />
-
-            <label
-              style={{
-                fontSize: 13,
-                fontWeight: 600,
-                color: th.textSecondary,
-                display: "block",
-                marginBottom: 6,
-              }}
-            >
-              Target Temperature (°C) - thermostat
-            </label>
-            <input
-              type="number"
-              step="0.5"
-              min="20"
-              max="50"
-              value={startCfg.temp}
-              onChange={(e) =>
-                setStartCfg((c) => ({ ...c, temp: e.target.value }))
-              }
-              style={{
-                width: "100%",
-                padding: "9px 12px",
-                borderRadius: 8,
-                border: `1px solid ${th.border}`,
-                background: th.bgAlt,
-                color: th.text,
-                fontSize: 15,
-                fontFamily: "'JetBrains Mono',monospace",
-                outline: "none",
+                padding: "5px 10px",
+                borderRadius: 6,
+                border: `1px solid ${th.accent}40`,
+                background: th.accentLight,
+                color: th.accent,
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: "pointer",
+                fontFamily: "inherit",
                 marginBottom: 16,
               }}
-            />
+            >
+              Apply default to all reactors
+            </button>
 
             <div
               style={{
                 display: "flex",
-                flexDirection: "column",
-                gap: 8,
-                marginBottom: 20,
+                gap: 18,
+                marginBottom: 16,
               }}
             >
               <label
@@ -5657,7 +5760,7 @@ export default function App() {
                     setStartCfg((c) => ({ ...c, od: e.target.checked }))
                   }
                 />
-                Start OD Reading
+                OD Reading
               </label>
               <label
                 style={{
@@ -5676,15 +5779,133 @@ export default function App() {
                     setStartCfg((c) => ({ ...c, growth: e.target.checked }))
                   }
                 />
-                Calculate Growth Rate
+                Growth Rate
               </label>
+            </div>
+
+            {/* Per-reactor setpoints */}
+            <div
+              style={{
+                fontSize: 12,
+                fontWeight: 700,
+                color: th.textMuted,
+                textTransform: "uppercase",
+                letterSpacing: "0.05em",
+                marginBottom: 8,
+              }}
+            >
+              Per-reactor setpoints
+            </div>
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+                marginBottom: 20,
+                maxHeight: 220,
+                overflowY: "auto",
+              }}
+            >
+              {reactors
+                .filter((r) => r.status === "online")
+                .map((r) => {
+                  const cfg = perReactorCfg[r.id] || {};
+                  return (
+                    <div
+                      key={r.id}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        background: th.bgAlt,
+                        border: `1px solid ${th.borderLight}`,
+                        borderRadius: 8,
+                        padding: "8px 10px",
+                      }}
+                    >
+                      <span
+                        style={{
+                          flex: 1,
+                          minWidth: 0,
+                          fontSize: 13,
+                          fontWeight: 600,
+                          color: th.text,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {getCultureLabel(r.id) || r.label}
+                      </span>
+                      <input
+                        type="number"
+                        step="0.5"
+                        min="20"
+                        max="50"
+                        value={cfg.temp ?? ""}
+                        onChange={(e) =>
+                          setPerReactorCfg((prev) => ({
+                            ...prev,
+                            [r.id]: { ...prev[r.id], temp: e.target.value },
+                          }))
+                        }
+                        title="Target temperature (°C)"
+                        style={{
+                          width: 64,
+                          padding: "6px 8px",
+                          borderRadius: 6,
+                          border: `1px solid ${th.border}`,
+                          background: th.surface,
+                          color: th.text,
+                          fontSize: 13,
+                          fontFamily: "'JetBrains Mono',monospace",
+                          outline: "none",
+                        }}
+                      />
+                      <span style={{ fontSize: 12, color: th.textMuted }}>
+                        °C
+                      </span>
+                      <input
+                        type="number"
+                        step="50"
+                        min="0"
+                        max="1200"
+                        value={cfg.rpm ?? ""}
+                        onChange={(e) =>
+                          setPerReactorCfg((prev) => ({
+                            ...prev,
+                            [r.id]: { ...prev[r.id], rpm: e.target.value },
+                          }))
+                        }
+                        title="Stirring (RPM)"
+                        style={{
+                          width: 72,
+                          padding: "6px 8px",
+                          borderRadius: 6,
+                          border: `1px solid ${th.border}`,
+                          background: th.surface,
+                          color: th.text,
+                          fontSize: 13,
+                          fontFamily: "'JetBrains Mono',monospace",
+                          outline: "none",
+                        }}
+                      />
+                      <span style={{ fontSize: 12, color: th.textMuted }}>
+                        RPM
+                      </span>
+                    </div>
+                  );
+                })}
             </div>
 
             <div style={{ display: "flex", gap: 10 }}>
               <button
                 onClick={async () => {
                   setStartingExp(true);
-                  const res = await handleStartExperiment(startCfg);
+                  const res = await handleStartExperiment(
+                    startCfg,
+                    perReactorCfg,
+                  );
                   setStartingExp(false);
                   setShowStartExp(false);
                   if (res.success && !res.partial) {
