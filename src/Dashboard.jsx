@@ -230,9 +230,51 @@ const buildPerReactorTelemetry = (
 
 const overviewCardDotStatus = (r, tel, chartLiveMode) => {
   if (r.status === "offline") return "offline";
+  if (r.status === "disconnected") return "disconnected";
   if (r.status === "unassigned") return "unassigned";
   if (r.status === "warning") return "warning";
   return "online";
+};
+
+/**
+ * Determine which units are physically powered/connected RIGHT NOW.
+ *
+ * /api/workers only lists the cluster *inventory* (is_active is a config flag,
+ * not live reachability). The reliable live signal is the long-running `monitor`
+ * job: every powered Pioreactor runs it. We ask the leader for each unit's
+ * running jobs (an async task) and poll the result. A connected unit returns
+ * "complete" with monitor running; an unplugged unit's task stays "pending".
+ *
+ * Returns a Set of connected unit ids. The leader is always considered connected.
+ */
+const probeConnectivity = async (unitIds, leaderId) => {
+  const connected = new Set();
+  if (leaderId) connected.add(leaderId);
+  await Promise.all(
+    unitIds.map(async (unitId) => {
+      if (unitId === leaderId) return;
+      const dispatch = await api(
+        `/api/workers/${encodeURIComponent(unitId)}/jobs/running`,
+      );
+      const path = dispatch?.result_url_path;
+      if (!path) return; // could not dispatch → treat as disconnected
+      // Poll the task result briefly (~2.4s max). Powered units answer fast.
+      for (let i = 0; i < 6; i++) {
+        await new Promise((r) => setTimeout(r, 400));
+        const res = await api(path);
+        if (res?.status === "complete") {
+          const jobs = res.result?.[unitId] || [];
+          const monitorUp = jobs.some(
+            (j) => j.job_name === "monitor" && j.is_running,
+          );
+          if (monitorUp) connected.add(unitId);
+          return;
+        }
+      }
+      // Timed out → unit is not responding → leave out of connected set.
+    }),
+  );
+  return connected;
 };
 
 /* ═══════════════════════════════════════════════════
@@ -375,6 +417,13 @@ const usePioreactorData = () => {
     setTempData(transformTimeSeries(tempRaw, workers));
     setGrowthData(transformTimeSeries(growthRaw, workers));
 
+    // 3b. Determine which units are physically connected right now.
+    const leaderId = workers[0]?.id;
+    const connectedSet = await probeConnectivity(
+      workers.map((w) => w.id),
+      leaderId,
+    );
+
     // Update reactor status based on actual reachability:
     // - Leader (index 0) is always reachable since we just talked to it
     // - Other workers: check if they have ANY data in the time series
@@ -395,22 +444,32 @@ const usePioreactorData = () => {
 
     // Set reactors once with reachability applied - no flicker.
     // Status meaning:
-    //   offline    = is_active=0 in cluster, or manually excluded (override)
-    //   unassigned = active in cluster but NOT assigned to this experiment
-    //   online     = active in cluster AND assigned (or producing data)
+    //   offline      = is_active=0 in cluster, or manually excluded (override)
+    //   disconnected = registered in cluster but not powered/reachable right now
+    //   unassigned   = connected & active but NOT assigned to this experiment
+    //   online       = connected, active, AND assigned (or producing data)
     setReactors(
       withOverrides.map((r, i) => {
-        if (r.status === "offline") return r; // is_active=0 or manually excluded
+        const isConnected = connectedSet.has(r.id);
+        if (r.status === "offline")
+          return { ...r, connected: isConnected }; // manually excluded / is_active=0
+        if (!isConnected) return { ...r, status: "disconnected", connected: false };
         // When the assignment endpoint is available, trust it as source of truth.
         if (assignedSet) {
-          if (assignedSet.has(r.id)) return { ...r, status: "online" };
+          if (assignedSet.has(r.id))
+            return { ...r, status: "online", connected: true };
           // Leader can self-report even while unassigned; treat data as proof.
-          if (i === 0 && workerHasData(i)) return { ...r, status: "online" };
-          return { ...r, status: "unassigned" };
+          if (i === 0 && workerHasData(i))
+            return { ...r, status: "online", connected: true };
+          return { ...r, status: "unassigned", connected: true };
         }
         // Older firmware fallback: infer from time-series presence.
-        if (i === 0) return { ...r, status: "online" };
-        return { ...r, status: workerHasData(i) ? "online" : "unassigned" };
+        if (i === 0) return { ...r, status: "online", connected: true };
+        return {
+          ...r,
+          status: workerHasData(i) ? "online" : "unassigned",
+          connected: true,
+        };
       }),
     );
 
@@ -905,6 +964,7 @@ const Dot = ({ s, th }) => {
       warning: th.warning,
       offline: th.danger,
       unassigned: th.accent,
+      disconnected: th.textMuted,
     }[s] || th.textMuted;
   return (
     <span
@@ -1096,6 +1156,289 @@ const InterpModal = ({ open, onClose, th, title, text: interpText }) => {
     </div>
   );
 };
+
+/* ─── REACTOR PERFORMANCE DETAIL MODAL ─── */
+const ReactorDetailModal = ({
+  open,
+  onClose,
+  th,
+  reactor,
+  telemetry,
+  cultureLabel,
+  odSeries,
+  tempSeries,
+  growthSeries,
+  stirringRpm,
+  chartLiveMode,
+}) => {
+  if (!open || !reactor) return null;
+  const tel = telemetry || {};
+  const stale = chartLiveMode && !tel.isLive;
+  const fmt = (v, d = 3) =>
+    v != null && Number.isFinite(Number(v)) ? Number(v).toFixed(d) : "—";
+
+  const Stat = ({ label, value, unit, color }) => (
+    <div
+      style={{
+        flex: "1 1 110px",
+        background: th.bgAlt,
+        border: `1px solid ${th.borderLight}`,
+        borderRadius: 10,
+        padding: "10px 14px",
+      }}
+    >
+      <div
+        style={{
+          fontSize: 12,
+          fontWeight: 600,
+          color: th.textMuted,
+          textTransform: "uppercase",
+          letterSpacing: "0.05em",
+        }}
+      >
+        {label}
+      </div>
+      <div
+        style={{
+          fontSize: 22,
+          fontWeight: 800,
+          color: color || th.text,
+          fontFamily: "'JetBrains Mono',monospace",
+        }}
+      >
+        {value}
+        {unit && (
+          <span style={{ fontSize: 13, color: th.textMuted }}> {unit}</span>
+        )}
+      </div>
+    </div>
+  );
+
+  const MiniChart = ({ title, data, color, yFmt }) => (
+    <div
+      style={{
+        background: th.bgAlt,
+        border: `1px solid ${th.borderLight}`,
+        borderRadius: 12,
+        padding: "14px 16px",
+        marginTop: 14,
+      }}
+    >
+      <div
+        style={{
+          fontSize: 14,
+          fontWeight: 700,
+          color: th.text,
+          marginBottom: 8,
+        }}
+      >
+        {title}
+      </div>
+      {data?.length ? (
+        <ResponsiveContainer width="100%" height={150}>
+          <AreaChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+            <defs>
+              <linearGradient id={`grad-${title}`} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={color} stopOpacity={0.35} />
+                <stop offset="100%" stopColor={color} stopOpacity={0.02} />
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" stroke={th.borderLight} />
+            <XAxis
+              dataKey="t"
+              tick={{ fontSize: 11, fill: th.textMuted }}
+              minTickGap={40}
+            />
+            <YAxis
+              tick={{ fontSize: 11, fill: th.textMuted }}
+              width={52}
+              domain={["auto", "auto"]}
+              tickFormatter={yFmt}
+            />
+            <Tooltip content={(p) => <Tip {...p} th={th} />} />
+            <Area
+              type="monotone"
+              dataKey="v"
+              stroke={color}
+              strokeWidth={2}
+              fill={`url(#grad-${title})`}
+              dot={false}
+              isAnimationActive={false}
+            />
+          </AreaChart>
+        </ResponsiveContainer>
+      ) : (
+        <div
+          style={{
+            padding: "28px 0",
+            textAlign: "center",
+            color: th.textMuted,
+            fontSize: 14,
+          }}
+        >
+          No {title.toLowerCase()} recorded for this bioreactor yet.
+        </div>
+      )}
+    </div>
+  );
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 1000,
+        background: th.modalOverlay,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 20,
+        backdropFilter: "blur(4px)",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: th.surface,
+          borderRadius: 18,
+          maxWidth: 720,
+          width: "100%",
+          maxHeight: "88vh",
+          overflowY: "auto",
+          border: `1px solid ${th.border}`,
+          boxShadow: th.shadowHover,
+        }}
+      >
+        <div
+          style={{
+            padding: "20px 24px",
+            borderBottom: `1px solid ${th.borderLight}`,
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            position: "sticky",
+            top: 0,
+            background: th.surface,
+            zIndex: 1,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <Dot s={stale ? "warning" : "online"} th={th} />
+            <div>
+              <h3
+                style={{
+                  margin: 0,
+                  fontSize: 20,
+                  fontWeight: 700,
+                  color: th.text,
+                }}
+              >
+                {cultureLabel || reactor.label}
+              </h3>
+              <p
+                style={{
+                  margin: 0,
+                  fontSize: 14,
+                  color: th.textMuted,
+                  fontFamily: "'JetBrains Mono',monospace",
+                }}
+              >
+                {reactor.id} · {reactor.role}
+                {stale ? " · data stale" : " · live"}
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            style={{
+              background: th.bgAlt,
+              border: `1px solid ${th.border}`,
+              borderRadius: 8,
+              width: 32,
+              height: 32,
+              cursor: "pointer",
+              fontSize: 20,
+              color: th.textSecondary,
+            }}
+          >
+            ×
+          </button>
+        </div>
+
+        <div style={{ padding: "20px 24px" }}>
+          <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
+            <div style={{ width: 160, flex: "0 0 auto", margin: "0 auto" }}>
+              <AnimatedVial
+                th={th}
+                reactorName=""
+                odValue={Number.isFinite(tel.od) ? tel.od : null}
+                tempValue={Number.isFinite(tel.temp) ? tel.temp : null}
+                stirringRpm={stirringRpm || 0}
+                growthRate={Number.isFinite(tel.growth) ? tel.growth : undefined}
+                pumpActive={false}
+                dataStale={stale}
+              />
+            </div>
+            <div
+              style={{
+                flex: "1 1 320px",
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 10,
+                alignContent: "flex-start",
+              }}
+            >
+              <Stat
+                label="Optical Density"
+                value={fmt(tel.od, 4)}
+                unit="OD"
+                color={th.accent}
+              />
+              <Stat
+                label="Temperature"
+                value={fmt(tel.temp, 1)}
+                unit="°C"
+                color="#f97316"
+              />
+              <Stat
+                label="Growth Rate"
+                value={fmt(tel.growth, 3)}
+                unit="h⁻¹"
+                color={tel.growth > 0 ? th.success : th.textMuted}
+              />
+              <Stat
+                label="Stirring"
+                value={stirringRpm ? String(stirringRpm) : "—"}
+                unit="RPM"
+              />
+            </div>
+          </div>
+
+          <MiniChart
+            title="Optical Density"
+            data={odSeries}
+            color={th.accent}
+            yFmt={(v) => v?.toFixed(2)}
+          />
+          <MiniChart
+            title="Temperature"
+            data={tempSeries}
+            color="#f97316"
+            yFmt={(v) => v?.toFixed(1)}
+          />
+          <MiniChart
+            title="Growth Rate"
+            data={growthSeries}
+            color={th.success}
+            yFmt={(v) => v?.toFixed(2)}
+          />
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const Chart = ({
   th,
   title,
@@ -2457,7 +2800,15 @@ export default function App() {
   const unassignedCount = reactors.filter(
     (r) => r.status === "unassigned",
   ).length;
+  const disconnectedCount = reactors.filter(
+    (r) => r.status === "disconnected",
+  ).length;
+  // Only physically connected units appear as tanks on the Overview. A unit that
+  // is registered in the cluster but powered off (status "disconnected") is hidden
+  // here so the tank count matches what's actually plugged in.
+  const connectedReactors = reactors.filter((r) => r.status !== "disconnected");
   const [assigningId, setAssigningId] = useState(null);
+  const [detailReactor, setDetailReactor] = useState(null);
 
   const handleAssign = async (id) => {
     if (!experiment) {
@@ -2519,6 +2870,26 @@ export default function App() {
       ).length,
     [reactors, telemetryByReactor],
   );
+
+  // Per-reactor series for the performance detail modal. The chart datasets are
+  // keyed r01/r02/... by the reactor's index in the full reactors array (same
+  // mapping transformTimeSeries uses), so resolve the key from that index.
+  const detailSeries = useMemo(() => {
+    if (!detailReactor) return { od: [], temp: [], growth: [] };
+    const idx = reactors.findIndex((x) => x.id === detailReactor.id);
+    if (idx < 0) return { od: [], temp: [], growth: [] };
+    const key = `r${String(idx + 1).padStart(2, "0")}`;
+    const extract = (ds) =>
+      (ds?.data || [])
+        .map((row) => ({ t: row.t, _ts: row._ts, v: row[key] }))
+        .filter((p) => p.v != null && Number.isFinite(Number(p.v)));
+    return {
+      od: extract(odData),
+      temp: extract(tempData),
+      growth: extract(growthData),
+    };
+  }, [detailReactor, reactors, odData, tempData, growthData]);
+
   const [starting, setStarting] = useState({});
 
   // Pump control state
@@ -3782,15 +4153,24 @@ export default function App() {
                 marginBottom: 28,
               }}
             >
-              {reactors.map((r) => (
+              {connectedReactors.map((r) => (
                 <div
                   key={r.id}
+                  onClick={() => {
+                    if (r.status === "online") setDetailReactor(r);
+                  }}
+                  title={
+                    r.status === "online"
+                      ? "Click to see how this bioreactor is performing"
+                      : undefined
+                  }
                   style={{
                     background: th.surface,
                     border: `1px solid ${th.border}`,
                     borderRadius: 14,
                     padding: "18px 20px",
                     boxShadow: th.shadow,
+                    cursor: r.status === "online" ? "pointer" : "default",
                     position: "relative",
                     overflow: "hidden",
                   }}
@@ -3851,7 +4231,10 @@ export default function App() {
                         NOT IN EXPERIMENT
                       </span>
                       <button
-                        onClick={() => handleAssign(r.id)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleAssign(r.id);
+                        }}
                         disabled={assigningId === r.id || !experiment}
                         style={{
                           padding: "6px 14px",
@@ -3981,6 +4364,7 @@ export default function App() {
                   <input
                     value={getCultureLabel(r.id)}
                     onChange={(e) => saveCultureLabel(r.id, e.target.value)}
+                    onClick={(e) => e.stopPropagation()}
                     placeholder="Culture name..."
                     style={{
                       marginTop: 6,
@@ -4034,10 +4418,13 @@ export default function App() {
             >
               <div>
                 <p style={{ margin: 0, fontSize: 17, color: th.textSecondary }}>
-                  {reactors.length} bioreactors ·{" "}
-                  {chartLiveMode ? `${streamingCount} streaming · ` : ""}
+                  {reactors.length} registered ·{" "}
+                  {connectedReactors.length} connected ·{" "}
                   {online} assigned ·{" "}
                   {unassignedCount > 0 ? `${unassignedCount} unassigned · ` : ""}
+                  {disconnectedCount > 0
+                    ? `${disconnectedCount} disconnected · `
+                    : ""}
                   {reactors.filter((r) => r.status === "offline").length}{" "}
                   excluded
                 </p>
@@ -4164,7 +4551,9 @@ export default function App() {
                               ? th.warning
                               : r.status === "unassigned"
                                 ? th.accent
-                                : th.danger,
+                                : r.status === "disconnected"
+                                  ? th.textMuted
+                                  : th.danger,
                         background:
                           r.status === "online"
                             ? th.successBg
@@ -4172,7 +4561,9 @@ export default function App() {
                               ? th.warningBg
                               : r.status === "unassigned"
                                 ? th.accentLight
-                                : th.dangerBg,
+                                : r.status === "disconnected"
+                                  ? th.bgAlt
+                                  : th.dangerBg,
                       }}
                     >
                       {r.status === "online"
@@ -4181,7 +4572,9 @@ export default function App() {
                           ? "Needs Fix"
                           : r.status === "unassigned"
                             ? "Unassigned"
-                            : "Offline"}
+                            : r.status === "disconnected"
+                              ? "Disconnected"
+                              : "Offline"}
                     </span>
                   </div>
                   <div style={{ display: "flex", gap: 6 }}>
@@ -5683,6 +6076,21 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Reactor performance detail */}
+      <ReactorDetailModal
+        open={!!detailReactor}
+        onClose={() => setDetailReactor(null)}
+        th={th}
+        reactor={detailReactor}
+        telemetry={detailReactor ? telemetryByReactor[detailReactor.id] : null}
+        cultureLabel={detailReactor ? getCultureLabel(detailReactor.id) : ""}
+        odSeries={detailSeries.od}
+        tempSeries={detailSeries.temp}
+        growthSeries={detailSeries.growth}
+        stirringRpm={runningJobs.stirring ? parseInt(targetRpm) || 400 : 0}
+        chartLiveMode={chartLiveMode}
+      />
 
       {/* Shared Feedback Modal */}
       {feedback.open && (
