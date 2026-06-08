@@ -2557,12 +2557,8 @@ export default function App() {
   const unassignedCount = reactors.filter(
     (r) => r.status === "unassigned",
   ).length;
-  const disconnectedCount = reactors.filter(
-    (r) => r.status === "disconnected",
-  ).length;
-  // Only physically connected units appear as tanks on the Overview. A unit that
-  // is registered in the cluster but powered off (status "disconnected") is hidden
-  // here so the tank count matches what's actually plugged in.
+  // Disconnected units (registered in the cluster but powered off / unreachable)
+  // are hidden from the entire UI — if it's not connected, it's not shown.
   const connectedReactors = reactors.filter((r) => r.status !== "disconnected");
   const [assigningId, setAssigningId] = useState(null);
   // The Overview shows one reactor's readings at a time; this is the selected one.
@@ -4276,15 +4272,12 @@ export default function App() {
             >
               <div>
                 <p style={{ margin: 0, fontSize: 17, color: th.textSecondary }}>
-                  {reactors.length} registered · {connectedReactors.length}{" "}
-                  connected · {online} assigned ·{" "}
+                  {connectedReactors.length} connected · {online} assigned ·{" "}
                   {unassignedCount > 0
                     ? `${unassignedCount} unassigned · `
                     : ""}
-                  {disconnectedCount > 0
-                    ? `${disconnectedCount} disconnected · `
-                    : ""}
-                  {reactors.filter((r) => r.status === "offline").length}{" "}
+                  {connectedReactors.filter((r) => r.status === "offline")
+                    .length}{" "}
                   excluded
                 </p>
               </div>
@@ -4311,7 +4304,7 @@ export default function App() {
             </div>
 
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              {reactors.map((r) => (
+              {connectedReactors.map((r) => (
                 <div
                   key={r.id}
                   style={{
