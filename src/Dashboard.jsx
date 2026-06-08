@@ -623,14 +623,15 @@ const usePioreactorData = () => {
       : { success: false, error: "Unassign endpoint returned an error." };
   };
 
-  // Start a job on all online workers
-  // Auto-assigns worker if it gets a 404 "not assigned" error, then retries
+  // Start a job on every ASSIGNED + connected bioreactor (status "online").
+  // We do NOT auto-assign here — callers should first warn the user about any
+  // connected-but-unassigned units (see assignmentGate in the component).
   const startJob = async (jobName, options = {}) => {
     if (!experiment) return { success: false, error: "No active experiment" };
     const expEnc = encodeURIComponent(experiment.experiment);
     const onlineReactors = reactors.filter((r) => r.status === "online");
     if (!onlineReactors.length)
-      return { success: false, error: "No online bioreactors" };
+      return { success: false, error: "No assigned bioreactors" };
 
     const tryRun = (r) =>
       pioFetch(
@@ -644,17 +645,7 @@ const usePioreactorData = () => {
         },
       );
 
-    const results = await Promise.allSettled(
-      onlineReactors.map(async (r) => {
-        const res = await tryRun(r);
-        if (res.status === 404) {
-          // Auto-assign worker and retry
-          await assignWorker(r.id, experiment.experiment);
-          return tryRun(r);
-        }
-        return res;
-      }),
-    );
+    const results = await Promise.allSettled(onlineReactors.map((r) => tryRun(r)));
     const succeeded = results.filter(
       (r) => r.status === "fulfilled" && r.value?.ok,
     ).length;
@@ -673,7 +664,7 @@ const usePioreactorData = () => {
     const expEnc = encodeURIComponent(experiment.experiment);
     const onlineReactors = reactors.filter((r) => r.status === "online");
     if (!onlineReactors.length)
-      return { success: false, error: "No online bioreactors" };
+      return { success: false, error: "No assigned bioreactors" };
     const results = await Promise.allSettled(
       onlineReactors.map((r) =>
         pioFetch(
@@ -3809,6 +3800,26 @@ export default function App() {
                 <button
                   onClick={() => {
                     if (!experiment) return;
+                    const pending = reactors.filter(
+                      (r) => r.status === "unassigned",
+                    );
+                    if (pending.length) {
+                      const names = pending
+                        .map((r) => getCultureLabel(r.id) || r.label)
+                        .join(", ");
+                      showFeedback(
+                        "Assign bioreactors first",
+                        `${pending.length} connected bioreactor${
+                          pending.length > 1 ? "s are" : " is"
+                        } not assigned to "${experiment.experiment}": ${names}.\n\nAssign ${
+                          pending.length > 1 ? "them" : "it"
+                        } on the Bioreactors page (or with the Assign button on a tank) before starting — otherwise ${
+                          pending.length > 1 ? "they" : "it"
+                        } won't be included.`,
+                        "error",
+                      );
+                      return;
+                    }
                     setShowStartExp(true);
                   }}
                   disabled={!experiment || !connected}
