@@ -559,31 +559,33 @@ const usePioreactorData = () => {
     });
   };
 
-  // Assign a worker to the current experiment.
-  // Returns true on a 2xx from either endpoint shape (Pioreactor versions differ).
+  // Is `unitId` currently assigned to `expEnc`? Reads the assignment list back.
+  const isUnitAssigned = async (unitId, expEnc) => {
+    const list = await api(`/api/experiments/${expEnc}/workers`);
+    return (
+      Array.isArray(list) &&
+      list.some((w) => (w?.pioreactor_unit || w?.unit || w) === unitId)
+    );
+  };
+
+  // Assign a worker to the current experiment via the collection endpoint
+  // (PUT /api/experiments/{exp}/workers with {pioreactor_unit}). We don't trust
+  // the PUT's response status (some transports/proxies make it opaque even though
+  // the server records the change) — instead we verify by reading the list back.
   const assignWorker = async (unitId, expName) => {
     const expEnc = encodeURIComponent(expName);
-    const ok = (res) => res && res.ok;
     try {
-      const res = await pioFetch(
-        buildApiUrl(`/api/experiments/${expEnc}/workers`),
-        {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ pioreactor_unit: unitId }),
-        },
-      );
-      if (ok(res)) return true;
+      await pioFetch(buildApiUrl(`/api/experiments/${expEnc}/workers`), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pioreactor_unit: unitId }),
+      });
     } catch {}
-    try {
-      const res = await pioFetch(
-        buildApiUrl(
-          `/api/experiments/${expEnc}/workers/${encodeURIComponent(unitId)}`,
-        ),
-        { method: "PUT", headers: { "Content-Type": "application/json" } },
-      );
-      if (ok(res)) return true;
-    } catch {}
+    // Verify (with one retry) that the assignment actually took effect.
+    for (let i = 0; i < 2; i++) {
+      if (await isUnitAssigned(unitId, expEnc)) return true;
+      await new Promise((r) => setTimeout(r, 300));
+    }
     return false;
   };
 
@@ -594,7 +596,10 @@ const usePioreactorData = () => {
     setTimeout(fetchAll, 400);
     return success
       ? { success: true }
-      : { success: false, error: "Assignment endpoints returned errors." };
+      : {
+          success: false,
+          error: "The Pioreactor did not record the assignment.",
+        };
   };
 
   // UI-facing: remove a unit from the active experiment, then refresh.
@@ -603,13 +608,14 @@ const usePioreactorData = () => {
     const expEnc = encodeURIComponent(experiment.experiment);
     let success = false;
     try {
-      const res = await pioFetch(
+      await pioFetch(
         buildApiUrl(
           `/api/experiments/${expEnc}/workers/${encodeURIComponent(unitId)}`,
         ),
         { method: "DELETE" },
       );
-      success = !!(res && res.ok);
+      // Verify by read-back: success means the unit is no longer assigned.
+      success = !(await isUnitAssigned(unitId, expEnc));
     } catch {}
     setTimeout(fetchAll, 400);
     return success
@@ -1151,288 +1157,6 @@ const InterpModal = ({ open, onClose, th, title, text: interpText }) => {
               {txt}
             </div>
           )}
-        </div>
-      </div>
-    </div>
-  );
-};
-
-/* ─── REACTOR PERFORMANCE DETAIL MODAL ─── */
-const ReactorDetailModal = ({
-  open,
-  onClose,
-  th,
-  reactor,
-  telemetry,
-  cultureLabel,
-  odSeries,
-  tempSeries,
-  growthSeries,
-  stirringRpm,
-  chartLiveMode,
-}) => {
-  if (!open || !reactor) return null;
-  const tel = telemetry || {};
-  const stale = chartLiveMode && !tel.isLive;
-  const fmt = (v, d = 3) =>
-    v != null && Number.isFinite(Number(v)) ? Number(v).toFixed(d) : "—";
-
-  const Stat = ({ label, value, unit, color }) => (
-    <div
-      style={{
-        flex: "1 1 110px",
-        background: th.bgAlt,
-        border: `1px solid ${th.borderLight}`,
-        borderRadius: 10,
-        padding: "10px 14px",
-      }}
-    >
-      <div
-        style={{
-          fontSize: 12,
-          fontWeight: 600,
-          color: th.textMuted,
-          textTransform: "uppercase",
-          letterSpacing: "0.05em",
-        }}
-      >
-        {label}
-      </div>
-      <div
-        style={{
-          fontSize: 22,
-          fontWeight: 800,
-          color: color || th.text,
-          fontFamily: "'JetBrains Mono',monospace",
-        }}
-      >
-        {value}
-        {unit && (
-          <span style={{ fontSize: 13, color: th.textMuted }}> {unit}</span>
-        )}
-      </div>
-    </div>
-  );
-
-  const MiniChart = ({ title, data, color, yFmt }) => (
-    <div
-      style={{
-        background: th.bgAlt,
-        border: `1px solid ${th.borderLight}`,
-        borderRadius: 12,
-        padding: "14px 16px",
-        marginTop: 14,
-      }}
-    >
-      <div
-        style={{
-          fontSize: 14,
-          fontWeight: 700,
-          color: th.text,
-          marginBottom: 8,
-        }}
-      >
-        {title}
-      </div>
-      {data?.length ? (
-        <ResponsiveContainer width="100%" height={150}>
-          <AreaChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-            <defs>
-              <linearGradient id={`grad-${title}`} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={color} stopOpacity={0.35} />
-                <stop offset="100%" stopColor={color} stopOpacity={0.02} />
-              </linearGradient>
-            </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke={th.borderLight} />
-            <XAxis
-              dataKey="t"
-              tick={{ fontSize: 11, fill: th.textMuted }}
-              minTickGap={40}
-            />
-            <YAxis
-              tick={{ fontSize: 11, fill: th.textMuted }}
-              width={52}
-              domain={["auto", "auto"]}
-              tickFormatter={yFmt}
-            />
-            <Tooltip content={(p) => <Tip {...p} th={th} />} />
-            <Area
-              type="monotone"
-              dataKey="v"
-              stroke={color}
-              strokeWidth={2}
-              fill={`url(#grad-${title})`}
-              dot={false}
-              isAnimationActive={false}
-            />
-          </AreaChart>
-        </ResponsiveContainer>
-      ) : (
-        <div
-          style={{
-            padding: "28px 0",
-            textAlign: "center",
-            color: th.textMuted,
-            fontSize: 14,
-          }}
-        >
-          No {title.toLowerCase()} recorded for this bioreactor yet.
-        </div>
-      )}
-    </div>
-  );
-
-  return (
-    <div
-      onClick={onClose}
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 1000,
-        background: th.modalOverlay,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 20,
-        backdropFilter: "blur(4px)",
-      }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          background: th.surface,
-          borderRadius: 18,
-          maxWidth: 720,
-          width: "100%",
-          maxHeight: "88vh",
-          overflowY: "auto",
-          border: `1px solid ${th.border}`,
-          boxShadow: th.shadowHover,
-        }}
-      >
-        <div
-          style={{
-            padding: "20px 24px",
-            borderBottom: `1px solid ${th.borderLight}`,
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            position: "sticky",
-            top: 0,
-            background: th.surface,
-            zIndex: 1,
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <Dot s={stale ? "warning" : "online"} th={th} />
-            <div>
-              <h3
-                style={{
-                  margin: 0,
-                  fontSize: 20,
-                  fontWeight: 700,
-                  color: th.text,
-                }}
-              >
-                {cultureLabel || reactor.label}
-              </h3>
-              <p
-                style={{
-                  margin: 0,
-                  fontSize: 14,
-                  color: th.textMuted,
-                  fontFamily: "'JetBrains Mono',monospace",
-                }}
-              >
-                {reactor.id} · {reactor.role}
-                {stale ? " · data stale" : " · live"}
-              </p>
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            style={{
-              background: th.bgAlt,
-              border: `1px solid ${th.border}`,
-              borderRadius: 8,
-              width: 32,
-              height: 32,
-              cursor: "pointer",
-              fontSize: 20,
-              color: th.textSecondary,
-            }}
-          >
-            ×
-          </button>
-        </div>
-
-        <div style={{ padding: "20px 24px" }}>
-          <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
-            <div style={{ width: 160, flex: "0 0 auto", margin: "0 auto" }}>
-              <AnimatedVial
-                th={th}
-                reactorName=""
-                odValue={Number.isFinite(tel.od) ? tel.od : null}
-                tempValue={Number.isFinite(tel.temp) ? tel.temp : null}
-                stirringRpm={stirringRpm || 0}
-                growthRate={Number.isFinite(tel.growth) ? tel.growth : undefined}
-                pumpActive={false}
-                dataStale={stale}
-              />
-            </div>
-            <div
-              style={{
-                flex: "1 1 320px",
-                display: "flex",
-                flexWrap: "wrap",
-                gap: 10,
-                alignContent: "flex-start",
-              }}
-            >
-              <Stat
-                label="Optical Density"
-                value={fmt(tel.od, 4)}
-                unit="OD"
-                color={th.accent}
-              />
-              <Stat
-                label="Temperature"
-                value={fmt(tel.temp, 1)}
-                unit="°C"
-                color="#f97316"
-              />
-              <Stat
-                label="Growth Rate"
-                value={fmt(tel.growth, 3)}
-                unit="h⁻¹"
-                color={tel.growth > 0 ? th.success : th.textMuted}
-              />
-              <Stat
-                label="Stirring"
-                value={stirringRpm ? String(stirringRpm) : "—"}
-                unit="RPM"
-              />
-            </div>
-          </div>
-
-          <MiniChart
-            title="Optical Density"
-            data={odSeries}
-            color={th.accent}
-            yFmt={(v) => v?.toFixed(2)}
-          />
-          <MiniChart
-            title="Temperature"
-            data={tempSeries}
-            color="#f97316"
-            yFmt={(v) => v?.toFixed(1)}
-          />
-          <MiniChart
-            title="Growth Rate"
-            data={growthSeries}
-            color={th.success}
-            yFmt={(v) => v?.toFixed(2)}
-          />
         </div>
       </div>
     </div>
@@ -2808,7 +2532,23 @@ export default function App() {
   // here so the tank count matches what's actually plugged in.
   const connectedReactors = reactors.filter((r) => r.status !== "disconnected");
   const [assigningId, setAssigningId] = useState(null);
-  const [detailReactor, setDetailReactor] = useState(null);
+  // The Overview shows one reactor's readings at a time; this is the selected one.
+  const [selectedReactorId, setSelectedReactorId] = useState(null);
+
+  // Auto-select a reactor on load (and keep the selection valid). Prefer an
+  // online unit, then any connected unit.
+  useEffect(() => {
+    const stillValid =
+      selectedReactorId &&
+      connectedReactors.some((r) => r.id === selectedReactorId);
+    if (stillValid) return;
+    const preferred =
+      connectedReactors.find((r) => r.status === "online") ||
+      connectedReactors[0];
+    setSelectedReactorId(preferred ? preferred.id : null);
+    // connectedReactors is derived from reactors each render; key off ids only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reactors]);
 
   const handleAssign = async (id) => {
     if (!experiment) {
@@ -2871,24 +2611,18 @@ export default function App() {
     [reactors, telemetryByReactor],
   );
 
-  // Per-reactor series for the performance detail modal. The chart datasets are
-  // keyed r01/r02/... by the reactor's index in the full reactors array (same
-  // mapping transformTimeSeries uses), so resolve the key from that index.
-  const detailSeries = useMemo(() => {
-    if (!detailReactor) return { od: [], temp: [], growth: [] };
-    const idx = reactors.findIndex((x) => x.id === detailReactor.id);
-    if (idx < 0) return { od: [], temp: [], growth: [] };
-    const key = `r${String(idx + 1).padStart(2, "0")}`;
-    const extract = (ds) =>
-      (ds?.data || [])
-        .map((row) => ({ t: row.t, _ts: row._ts, v: row[key] }))
-        .filter((p) => p.v != null && Number.isFinite(Number(p.v)));
-    return {
-      od: extract(odData),
-      temp: extract(tempData),
-      growth: extract(growthData),
-    };
-  }, [detailReactor, reactors, odData, tempData, growthData]);
+  // The currently-selected reactor and its chart key (r01/r02/... matching the
+  // reactor's index in the full reactors array, same mapping transformTimeSeries
+  // uses). Used to scope the Overview charts to one reactor at a time.
+  const selectedReactor =
+    reactors.find((r) => r.id === selectedReactorId) || null;
+  const selectedKey = (() => {
+    const idx = reactors.findIndex((r) => r.id === selectedReactorId);
+    return idx >= 0 ? `r${String(idx + 1).padStart(2, "0")}` : null;
+  })();
+  const selectedLabel = selectedReactor
+    ? getCultureLabel(selectedReactor.id) || selectedReactor.label
+    : "";
 
   const [starting, setStarting] = useState({});
 
@@ -3421,6 +3155,21 @@ export default function App() {
     startLabel: starting.growth_rate_calculating ? "Starting..." : "▶ Start GR",
     isRunning: !!runningJobs.growth_rate_calculating,
   };
+
+  // Overview charts are scoped to the selected reactor only. If that reactor has
+  // no series in the dataset yet, pass empty data so the Chart shows its empty
+  // state instead of a blank plot. The dedicated OD/Temp/Growth pages keep using
+  // the unscoped odP/tempP/grP (all reactors).
+  const scopeToSelected = (p, keys) => {
+    if (!selectedKey) return p;
+    const sel = keys.filter((k) => k.key === selectedKey);
+    return sel.length
+      ? { ...p, keys: sel }
+      : { ...p, keys: [], data: [] };
+  };
+  const odPSel = scopeToSelected(odP, odKeys);
+  const tempPSel = scopeToSelected(tempP, tempKeys);
+  const grPSel = scopeToSelected(grP, growthKeys);
 
   const CS = ({ icon, title, desc }) => (
     <div
@@ -4156,21 +3905,20 @@ export default function App() {
               {connectedReactors.map((r) => (
                 <div
                   key={r.id}
-                  onClick={() => {
-                    if (r.status === "online") setDetailReactor(r);
-                  }}
-                  title={
-                    r.status === "online"
-                      ? "Click to see how this bioreactor is performing"
-                      : undefined
-                  }
+                  onClick={() => setSelectedReactorId(r.id)}
+                  title="Click to show this bioreactor's readings below"
                   style={{
                     background: th.surface,
-                    border: `1px solid ${th.border}`,
+                    border: `1px solid ${
+                      r.id === selectedReactorId ? th.accent : th.border
+                    }`,
                     borderRadius: 14,
                     padding: "18px 20px",
-                    boxShadow: th.shadow,
-                    cursor: r.status === "online" ? "pointer" : "default",
+                    boxShadow:
+                      r.id === selectedReactorId
+                        ? `0 0 0 2px ${th.accent}`
+                        : th.shadow,
+                    cursor: "pointer",
                     position: "relative",
                     overflow: "hidden",
                   }}
@@ -4399,9 +4147,60 @@ export default function App() {
               ))}
             </div>
 
-            <Chart th={th} {...odP} />
-            <Chart th={th} {...tempP} />
-            <Chart th={th} {...grP} />
+            {selectedReactor && (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  padding: "12px 18px",
+                  marginBottom: 14,
+                  background: th.accentLight,
+                  border: `1px solid ${th.accent}40`,
+                  borderRadius: 12,
+                }}
+              >
+                <Dot
+                  s={overviewCardDotStatus(
+                    selectedReactor,
+                    telemetryByReactor[selectedReactor.id],
+                    chartLiveMode,
+                  )}
+                  th={th}
+                />
+                <span
+                  style={{ fontSize: 13, fontWeight: 600, color: th.textMuted }}
+                >
+                  Showing readings for
+                </span>
+                <span
+                  style={{ fontSize: 17, fontWeight: 800, color: th.accent }}
+                >
+                  {selectedLabel}
+                </span>
+                <span
+                  style={{
+                    fontSize: 13,
+                    color: th.textMuted,
+                    fontFamily: "'JetBrains Mono',monospace",
+                  }}
+                >
+                  {selectedReactor.id}
+                </span>
+                <span
+                  style={{
+                    marginLeft: "auto",
+                    fontSize: 12,
+                    color: th.textMuted,
+                  }}
+                >
+                  Click another tank above to switch
+                </span>
+              </div>
+            )}
+            <Chart th={th} {...odPSel} />
+            <Chart th={th} {...tempPSel} />
+            <Chart th={th} {...grPSel} />
           </div>
         )}
 
@@ -6076,21 +5875,6 @@ export default function App() {
           </div>
         </div>
       )}
-
-      {/* Reactor performance detail */}
-      <ReactorDetailModal
-        open={!!detailReactor}
-        onClose={() => setDetailReactor(null)}
-        th={th}
-        reactor={detailReactor}
-        telemetry={detailReactor ? telemetryByReactor[detailReactor.id] : null}
-        cultureLabel={detailReactor ? getCultureLabel(detailReactor.id) : ""}
-        odSeries={detailSeries.od}
-        tempSeries={detailSeries.temp}
-        growthSeries={detailSeries.growth}
-        stirringRpm={runningJobs.stirring ? parseInt(targetRpm) || 400 : 0}
-        chartLiveMode={chartLiveMode}
-      />
 
       {/* Shared Feedback Modal */}
       {feedback.open && (
