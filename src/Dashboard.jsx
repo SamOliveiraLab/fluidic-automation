@@ -451,9 +451,9 @@ const usePioreactorData = () => {
     setReactors(
       withOverrides.map((r, i) => {
         const isConnected = connectedSet.has(r.id);
-        if (r.status === "offline")
-          return { ...r, connected: isConnected }; // manually excluded / is_active=0
-        if (!isConnected) return { ...r, status: "disconnected", connected: false };
+        if (r.status === "offline") return { ...r, connected: isConnected }; // manually excluded / is_active=0
+        if (!isConnected)
+          return { ...r, status: "disconnected", connected: false };
         // When the assignment endpoint is available, trust it as source of truth.
         if (assignedSet) {
           if (assignedSet.has(r.id))
@@ -645,7 +645,9 @@ const usePioreactorData = () => {
         },
       );
 
-    const results = await Promise.allSettled(onlineReactors.map((r) => tryRun(r)));
+    const results = await Promise.allSettled(
+      onlineReactors.map((r) => tryRun(r)),
+    );
     const succeeded = results.filter(
       (r) => r.status === "fulfilled" && r.value?.ok,
     ).length;
@@ -3154,9 +3156,7 @@ export default function App() {
   const scopeToSelected = (p, keys) => {
     if (!selectedKey) return p;
     const sel = keys.filter((k) => k.key === selectedKey);
-    return sel.length
-      ? { ...p, keys: sel }
-      : { ...p, keys: [], data: [] };
+    return sel.length ? { ...p, keys: sel } : { ...p, keys: [], data: [] };
   };
   const odPSel = scopeToSelected(odP, odKeys);
   const tempPSel = scopeToSelected(tempP, tempKeys);
@@ -3907,10 +3907,12 @@ export default function App() {
             />
             <div
               style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fill,minmax(200px,1fr))",
+                display: "flex",
                 gap: 14,
                 marginBottom: 28,
+                overflowX: "auto",
+                paddingBottom: 6,
+                scrollbarWidth: "thin",
               }}
             >
               {connectedReactors.map((r) => (
@@ -3919,6 +3921,10 @@ export default function App() {
                   onClick={() => setSelectedReactorId(r.id)}
                   title="Click to show this bioreactor's readings below"
                   style={{
+                    // Grow to fill the row when few; keep a min width and don't
+                    // shrink so the row scrolls horizontally once there are many.
+                    flex: "1 0 240px",
+                    minWidth: 240,
                     background: th.surface,
                     border: `1px solid ${
                       r.id === selectedReactorId ? th.accent : th.border
@@ -3927,7 +3933,7 @@ export default function App() {
                     padding: "18px 20px",
                     boxShadow:
                       r.id === selectedReactorId
-                        ? `0 0 0 2px ${th.accent}`
+                        ? `0 0 0 1px ${th.accent}`
                         : th.shadow,
                     cursor: "pointer",
                     position: "relative",
@@ -4161,14 +4167,10 @@ export default function App() {
             {selectedReactor && (
               <div
                 style={{
-                  display: "flex",
+                  display: "inline-flex",
                   alignItems: "center",
-                  gap: 10,
-                  padding: "12px 18px",
+                  gap: 8,
                   marginBottom: 14,
-                  background: th.accentLight,
-                  border: `1px solid ${th.accent}40`,
-                  borderRadius: 12,
                 }}
               >
                 <Dot
@@ -4180,32 +4182,14 @@ export default function App() {
                   th={th}
                 />
                 <span
-                  style={{ fontSize: 13, fontWeight: 600, color: th.textMuted }}
+                  style={{ fontSize: 14, fontWeight: 600, color: th.textMuted }}
                 >
                   Showing readings for
                 </span>
                 <span
-                  style={{ fontSize: 17, fontWeight: 800, color: th.accent }}
+                  style={{ fontSize: 16, fontWeight: 800, color: th.accent }}
                 >
                   {selectedLabel}
-                </span>
-                <span
-                  style={{
-                    fontSize: 13,
-                    color: th.textMuted,
-                    fontFamily: "'JetBrains Mono',monospace",
-                  }}
-                >
-                  {selectedReactor.id}
-                </span>
-                <span
-                  style={{
-                    marginLeft: "auto",
-                    fontSize: 12,
-                    color: th.textMuted,
-                  }}
-                >
-                  Click another tank above to switch
                 </span>
               </div>
             )}
@@ -4228,10 +4212,11 @@ export default function App() {
             >
               <div>
                 <p style={{ margin: 0, fontSize: 17, color: th.textSecondary }}>
-                  {reactors.length} registered ·{" "}
-                  {connectedReactors.length} connected ·{" "}
-                  {online} assigned ·{" "}
-                  {unassignedCount > 0 ? `${unassignedCount} unassigned · ` : ""}
+                  {reactors.length} registered · {connectedReactors.length}{" "}
+                  connected · {online} assigned ·{" "}
+                  {unassignedCount > 0
+                    ? `${unassignedCount} unassigned · `
+                    : ""}
                   {disconnectedCount > 0
                     ? `${disconnectedCount} disconnected · `
                     : ""}
@@ -4418,28 +4403,27 @@ export default function App() {
                           : "Assign to experiment"}
                       </button>
                     )}
-                    {r.status === "online" &&
-                      r.role !== "Leader + Worker" && (
-                        <button
-                          onClick={() => handleUnassign(r.id)}
-                          disabled={assigningId === r.id}
-                          style={{
-                            padding: "6px 12px",
-                            borderRadius: 7,
-                            border: `1px solid ${th.border}`,
-                            background: th.bgAlt,
-                            color: th.textSecondary,
-                            fontSize: 15,
-                            fontWeight: 600,
-                            cursor:
-                              assigningId === r.id ? "not-allowed" : "pointer",
-                            fontFamily: "inherit",
-                          }}
-                          title="Remove from the current experiment"
-                        >
-                          {assigningId === r.id ? "…" : "Unassign"}
-                        </button>
-                      )}
+                    {r.status === "online" && r.role !== "Leader + Worker" && (
+                      <button
+                        onClick={() => handleUnassign(r.id)}
+                        disabled={assigningId === r.id}
+                        style={{
+                          padding: "6px 12px",
+                          borderRadius: 7,
+                          border: `1px solid ${th.border}`,
+                          background: th.bgAlt,
+                          color: th.textSecondary,
+                          fontSize: 15,
+                          fontWeight: 600,
+                          cursor:
+                            assigningId === r.id ? "not-allowed" : "pointer",
+                          fontFamily: "inherit",
+                        }}
+                        title="Remove from the current experiment"
+                      >
+                        {assigningId === r.id ? "…" : "Unassign"}
+                      </button>
+                    )}
                     {r.role !== "Leader + Worker" && (
                       <button
                         onClick={() => toggleStatus(r.id)}
