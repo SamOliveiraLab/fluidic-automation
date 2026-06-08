@@ -1011,7 +1011,6 @@ const Tip = ({ active, payload, label, th }) => {
         border: `1px solid ${th.border}`,
         borderRadius: 10,
         padding: "10px 14px",
-        boxShadow: th.shadow,
         fontSize: 16,
       }}
     >
@@ -4000,10 +3999,6 @@ export default function App() {
                     }`,
                     borderRadius: 14,
                     padding: "18px 20px",
-                    boxShadow:
-                      r.id === selectedReactorId
-                        ? `0 0 0 1px ${th.accent}`
-                        : th.shadow,
                     cursor: "pointer",
                     position: "relative",
                     overflow: "hidden",
