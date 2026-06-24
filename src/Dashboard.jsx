@@ -4779,6 +4779,7 @@ export default function App() {
             th={th}
             reactors={reactors}
             connected={connected}
+            experimentName={experiment?.experiment}
             getCultureLabel={getCultureLabel}
             showFeedback={showFeedback}
             onCalibrationsChanged={refresh}

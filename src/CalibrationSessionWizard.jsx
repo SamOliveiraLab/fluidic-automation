@@ -80,11 +80,21 @@ const sessionResultFrom = (session, step) =>
   step?.metadata?.result ||
   null;
 
+const PUMP_JOB_FOR_DEVICE = {
+  media_pump: "add_media",
+  waste_pump: "remove_waste",
+  alt_media_pump: "add_alt_media",
+};
+
+/** Pioreactor tracer step always runs ~1s; scale helper converts longer runs. */
+const isTracerVolumeStep = (step) => step?.step_id === "tracer_volume";
+
 export default function CalibrationSessionWizard({
   th,
   open,
   unitId,
   protocol,
+  experimentName,
   onClose,
   onComplete,
 }) {
@@ -94,6 +104,8 @@ export default function CalibrationSessionWizard({
   const [values, setValues] = useState({});
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [scaleTestSec, setScaleTestSec] = useState("5");
+  const [scaleTestGrams, setScaleTestGrams] = useState("");
   const startInFlight = useRef(false);
 
   const encUnit = encodeURIComponent(unitId || "");
@@ -207,6 +219,52 @@ export default function CalibrationSessionWizard({
     reset();
     onComplete?.(result);
     onClose?.();
+  };
+
+  const runPumpDurationTest = async () => {
+    if (!unitId || !protocol?.target_device) return;
+    const sec = Number.parseFloat(scaleTestSec);
+    if (!Number.isFinite(sec) || sec <= 0) {
+      setError("Enter a valid test duration in seconds.");
+      return;
+    }
+    const jobName = PUMP_JOB_FOR_DEVICE[protocol.target_device];
+    if (!jobName) {
+      setError("Pump test is only available for pump calibrations.");
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      const exp = encodeURIComponent(experimentName || "$experiment");
+      const res = await apiMutate(
+        `/api/workers/${encUnit}/jobs/run/job_name/${jobName}/experiments/${exp}`,
+        "POST",
+        { options: { duration: sec } },
+      );
+      if (!res.ok) {
+        throw new Error(apiErrorMessage(res.data, res.status));
+      }
+    } catch (e) {
+      setError(e.message || "Pump test failed.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const applyScaleHelper = () => {
+    const sec = Number.parseFloat(scaleTestSec);
+    const grams = Number.parseFloat(scaleTestGrams);
+    if (!Number.isFinite(sec) || sec <= 0 || !Number.isFinite(grams) || grams <= 0) {
+      setError("Enter valid seconds and grams from your scale.");
+      return;
+    }
+    const perSecond = grams / sec;
+    setValues((prev) => ({
+      ...prev,
+      volume_ml: String(Number(perSecond.toFixed(4))),
+    }));
+    setError("");
   };
 
   if (!open) return null;
@@ -381,6 +439,109 @@ export default function CalibrationSessionWizard({
             >
               {step.body}
             </p>
+          )}
+
+          {isTracerVolumeStep(step) && (
+            <div
+              style={{
+                marginBottom: 16,
+                padding: "12px 14px",
+                borderRadius: 10,
+                border: `1px solid ${th.border}`,
+                background: th.bgAlt,
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 14,
+                  fontWeight: 700,
+                  color: th.text,
+                  marginBottom: 6,
+                }}
+              >
+                Low-resolution scale helper
+              </div>
+              <p
+                style={{
+                  margin: "0 0 10px",
+                  fontSize: 14,
+                  color: th.textMuted,
+                  lineHeight: 1.55,
+                }}
+              >
+                The tracer uses a 1 s pump pulse (too small for many scales). Run a
+                longer test, weigh in grams, then apply. We divide by seconds so it
+                matches what the Pi expects for a 1 s tracer.
+              </p>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: 8,
+                  marginBottom: 8,
+                }}
+              >
+                <label style={{ fontSize: 13, fontWeight: 600, color: th.textSecondary }}>
+                  Test duration (s)
+                  <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={scaleTestSec}
+                    onChange={(e) => setScaleTestSec(e.target.value)}
+                    style={{ ...inputStyle, marginTop: 4 }}
+                  />
+                </label>
+                <label style={{ fontSize: 13, fontWeight: 600, color: th.textSecondary }}>
+                  Weight on scale (g)
+                  <input
+                    type="number"
+                    min={0}
+                    step="any"
+                    value={scaleTestGrams}
+                    onChange={(e) => setScaleTestGrams(e.target.value)}
+                    style={{ ...inputStyle, marginTop: 4 }}
+                  />
+                </label>
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={runPumpDurationTest}
+                  style={{
+                    padding: "6px 12px",
+                    borderRadius: 8,
+                    border: `1px solid ${th.border}`,
+                    background: th.surface,
+                    fontSize: 14,
+                    fontWeight: 600,
+                    cursor: loading ? "not-allowed" : "pointer",
+                    fontFamily: "inherit",
+                  }}
+                >
+                  Run {scaleTestSec || "?"}s pump test
+                </button>
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={applyScaleHelper}
+                  style={{
+                    padding: "6px 12px",
+                    borderRadius: 8,
+                    border: "none",
+                    background: th.accent,
+                    color: "#fff",
+                    fontSize: 14,
+                    fontWeight: 600,
+                    cursor: loading ? "not-allowed" : "pointer",
+                    fontFamily: "inherit",
+                  }}
+                >
+                  Apply to volume field
+                </button>
+              </div>
+            </div>
           )}
 
           {step?.fields?.map((field) => {
