@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import CalibrationsPage from "./CalibrationsPage";
-import { apiGet as workerApiGet } from "./pioreactorApi";
+import { apiGet as workerApiGet, unwrapUnitTaskValue, taskResultDone } from "./pioreactorApi";
 import {
   AreaChart,
   Area,
@@ -264,11 +264,11 @@ const probeConnectivity = async (unitIds, leaderId) => {
       for (let i = 0; i < 6; i++) {
         await new Promise((r) => setTimeout(r, 400));
         const res = await api(path);
-        if (res?.status === "complete") {
-          const jobs = res.result?.[unitId] || [];
-          const monitorUp = jobs.some(
-            (j) => j.job_name === "monitor" && j.is_running,
-          );
+        if (taskResultDone(res?.status)) {
+          const jobs = unwrapUnitTaskValue(res, unitId) || [];
+          const monitorUp = Array.isArray(jobs)
+            ? jobs.some((j) => j.job_name === "monitor" && j.is_running)
+            : false;
           if (monitorUp) connected.add(unitId);
           return;
         }

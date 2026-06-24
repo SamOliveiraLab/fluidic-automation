@@ -30,9 +30,25 @@ export const pioFetch = (url, opts = {}) =>
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+export const taskResultDone = (status) =>
+  status === "complete" || status === "succeeded";
+
+/** Unwrap per-unit payload from async task fanout results. */
+export const unwrapUnitTaskValue = (taskPayload, unitId) => {
+  if (!taskPayload || typeof taskPayload !== "object" || !unitId) return null;
+  const unitResult = taskPayload.result?.[unitId] ?? taskPayload[unitId];
+  if (!unitResult) return null;
+  if (Array.isArray(unitResult)) return unitResult;
+  if (unitResult.ok === true && unitResult.value != null) return unitResult.value;
+  if (unitResult.ok === false) return null;
+  return unitResult;
+};
+
 /** Unwrap fanout result: { unitId: payload } → payload */
 const unwrapWorkerResult = (payload, unitId) => {
   if (!payload || typeof payload !== "object" || !unitId) return payload;
+  const unwrapped = unwrapUnitTaskValue({ result: payload }, unitId);
+  if (unwrapped != null) return unwrapped;
   if (unitId in payload && Object.keys(payload).length <= 2) {
     return payload[unitId];
   }
@@ -49,7 +65,7 @@ export const pollTaskResult = async (resultPath, { attempts = 12, delayMs = 400 
     const res = await pioFetch(buildApiUrl(resultPath));
     if (!res.ok) return null;
     const data = await res.json();
-    if (data?.status === "complete") return data.result ?? null;
+    if (taskResultDone(data?.status)) return data.result ?? null;
     if (data?.status === "failed") return null;
     await sleep(delayMs);
   }
