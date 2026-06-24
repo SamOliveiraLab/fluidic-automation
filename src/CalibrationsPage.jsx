@@ -10,6 +10,8 @@ import {
   ComposedChart,
 } from "recharts";
 import { apiGet, apiMutate } from "./pioreactorApi";
+import CalibrationSessionWizard from "./CalibrationSessionWizard";
+import { protocolForDevice } from "./calibrationProtocols";
 
 const TABS = [
   { id: "pumps", label: "Pumps" },
@@ -170,7 +172,7 @@ export default function CalibrationsPage({
   connected,
   getCultureLabel,
   showFeedback,
-  onNavigatePumps,
+  onCalibrationsChanged,
 }) {
   const units = useMemo(
     () => reactors.filter((r) => r.status !== "disconnected"),
@@ -186,6 +188,9 @@ export default function CalibrationsPage({
   const [selectedDetail, setSelectedDetail] = useState(null);
   const [busy, setBusy] = useState(false);
   const [copyTarget, setCopyTarget] = useState("");
+  const [wizardOpen, setWizardOpen] = useState(false);
+
+  const activeProtocol = protocolForDevice(device);
 
   useEffect(() => {
     if (!unitId && units[0]) setUnitId(units[0].id);
@@ -310,6 +315,40 @@ export default function CalibrationsPage({
     return (r && getCultureLabel?.(r.id)) || r?.label || id;
   };
 
+  const handleWizardComplete = async (result) => {
+    await load();
+    onCalibrationsChanged?.();
+    const links = result?.calibrations?.length
+      ? result.calibrations
+      : result?.calibration
+        ? [result.calibration]
+        : [];
+    const hit = links.find(
+      (c) =>
+        c.calibration_name &&
+        (c.device === device || !c.device),
+    );
+    if (hit?.calibration_name) {
+      setBusy(true);
+      const res = await apiMutate(
+        `/api/workers/${encodeURIComponent(unitId)}/active_calibrations/${device}/${encodeURIComponent(hit.calibration_name)}`,
+        "PATCH",
+      );
+      setBusy(false);
+      if (res.ok) {
+        showFeedback(
+          "Calibration saved & activated",
+          `${deviceLabel(device)}: ${hit.calibration_name}`,
+          "success",
+        );
+        load();
+        onCalibrationsChanged?.();
+      }
+    } else if (links.length) {
+      showFeedback("Calibration saved", "Set it active from the list if needed.", "success");
+    }
+  };
+
   const btn = (primary) => ({
     padding: primary ? "8px 14px" : "6px 14px",
     borderRadius: primary ? 8 : 7,
@@ -347,7 +386,7 @@ export default function CalibrationsPage({
             Calibrations
           </h2>
           <p style={{ margin: "4px 0 0", fontSize: 16, color: th.textMuted }}>
-            Manage pump, stirring, and OD curves per reactor.
+            Run calibrations here, then set active or copy between reactors.
           </p>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -453,16 +492,31 @@ export default function CalibrationsPage({
             style={{
               padding: "18px 22px",
               borderBottom: `1px solid ${th.borderLight}`,
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "flex-start",
+              gap: 10,
+              flexWrap: "wrap",
             }}
           >
-            <div style={{ fontWeight: 700, fontSize: 16, color: th.text }}>
-              Saved curves
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 16, color: th.text }}>
+                Saved curves
+              </div>
+              <div style={{ fontSize: 15, color: th.textMuted, marginTop: 2 }}>
+                {activeName
+                  ? `Active: ${activeName}`
+                  : `No active curve for ${deviceLabel(device).toLowerCase()}`}
+              </div>
             </div>
-            <div style={{ fontSize: 15, color: th.textMuted, marginTop: 2 }}>
-              {activeName
-                ? `Active: ${activeName}`
-                : `No active curve for ${deviceLabel(device).toLowerCase()}`}
-            </div>
+            <button
+              type="button"
+              disabled={!connected || !activeProtocol || busy}
+              onClick={() => setWizardOpen(true)}
+              style={btn(true)}
+            >
+              Run calibration
+            </button>
           </div>
           {calsForDevice.length === 0 ? (
             <div style={{ padding: 20, fontSize: 16, color: th.textMuted }}>
@@ -653,6 +707,15 @@ export default function CalibrationsPage({
           )}
         </div>
       </div>
+
+      <CalibrationSessionWizard
+        th={th}
+        open={wizardOpen}
+        unitId={unitId}
+        protocol={activeProtocol}
+        onClose={() => setWizardOpen(false)}
+        onComplete={handleWizardComplete}
+      />
     </div>
   );
 }

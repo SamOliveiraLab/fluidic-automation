@@ -4728,7 +4728,7 @@ export default function App() {
             connected={connected}
             getCultureLabel={getCultureLabel}
             showFeedback={showFeedback}
-            onNavigatePumps={() => setPage("pumps")}
+            onCalibrationsChanged={refresh}
           />
         )}
 
@@ -5212,20 +5212,7 @@ export default function App() {
               }}
             >
               Manual dosing is disabled until each target reactor has an active
-              pump calibration. Run{" "}
-              <code
-                style={{
-                  background: th.surface,
-                  padding: "2px 8px",
-                  borderRadius: 5,
-                  fontFamily: "'JetBrains Mono',monospace",
-                  fontSize: 13,
-                  color: th.textSecondary,
-                }}
-              >
-                pio calibrations run --device media_pump
-              </code>{" "}
-              on the Pi, then set it active on{" "}
+              pump calibration. Run calibration on the{" "}
               <button
                 type="button"
                 onClick={() => setPage("calibrations")}
@@ -5241,8 +5228,8 @@ export default function App() {
                 }}
               >
                 Calibrations
-              </button>
-              .
+              </button>{" "}
+              tab, then set the curve active.
             </div>
           </div>
         )}
