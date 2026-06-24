@@ -278,6 +278,19 @@ const probeConnectivity = async (unitIds, leaderId) => {
   return connected;
 };
 
+const PUMP_CALIB_DEVICE = {
+  media: "media_pump",
+  waste: "waste_pump",
+  alt_media: "alt_media_pump",
+};
+
+const pumpHasActiveCal = (unitId, pumpKey, calsByUnit) => {
+  const device = PUMP_CALIB_DEVICE[pumpKey];
+  if (!device) return false;
+  const entry = calsByUnit?.[unitId]?.[device];
+  return !!entry?.calibration_name;
+};
+
 /* ═══════════════════════════════════════════════════
    CUSTOM HOOK: usePioreactorData
    Fetches all data from the API and refreshes periodically
@@ -304,6 +317,8 @@ const usePioreactorData = () => {
     } catch {}
   }, [selectedExpName]);
   const [reactors, setReactors] = useState([]);
+  /** Per-unit active calibrations from GET .../active_calibrations */
+  const [activeCalibrations, setActiveCalibrations] = useState({});
   // Pioreactor units assigned to the currently selected experiment.
   // A unit can be in the cluster (/api/workers) yet NOT assigned here.
   const [assignedUnits, setAssignedUnits] = useState([]);
@@ -474,7 +489,24 @@ const usePioreactorData = () => {
       }),
     );
 
-    // 4. Fetch logs
+    // 4. Active calibrations (connected units only) for pump gating
+    const connectedIds = withOverrides
+      .filter((r) => connectedSet.has(r.id))
+      .map((r) => r.id);
+    const calEntries = await Promise.all(
+      connectedIds.map((id) =>
+        api(`/api/workers/${encodeURIComponent(id)}/active_calibrations`),
+      ),
+    );
+    const calsByUnit = {};
+    connectedIds.forEach((id, i) => {
+      if (calEntries[i] && typeof calEntries[i] === "object") {
+        calsByUnit[id] = calEntries[i];
+      }
+    });
+    setActiveCalibrations(calsByUnit);
+
+    // 5. Fetch logs
     const logsRaw = await api(`/api/experiments/${expName}/logs`);
     if (Array.isArray(logsRaw)) {
       setLogs(logsRaw.slice(0, 200));
@@ -871,6 +903,7 @@ const usePioreactorData = () => {
     assignReactor,
     unassignReactor,
     refresh: fetchAll,
+    activeCalibrations,
   };
 };
 
@@ -2468,6 +2501,7 @@ export default function App() {
     timeRange,
     setTimeRange,
     refresh,
+    activeCalibrations,
   } = usePioreactorData();
 
   // Culture labels: stored per experiment in localStorage
@@ -2665,12 +2699,40 @@ export default function App() {
   const [pumpLog, setPumpLog] = useState([]);
   const [manualPump, setManualPump] = useState("media"); // media, waste, alt_media
 
+  const manualDoseBlock = useMemo(() => {
+    if (!connected || !experiment) return "Connect to Pioreactor to dose.";
+    const onlineR = reactors.filter((r) => r.status === "online");
+    if (!onlineR.length) {
+      return "No reactors assigned to this experiment.";
+    }
+    const missing = onlineR.filter(
+      (r) => !pumpHasActiveCal(r.id, manualPump, activeCalibrations),
+    );
+    if (!missing.length) return null;
+    const pumpLabel = manualPump.replace("_", " ");
+    const names = missing
+      .map((r) => getCultureLabel(r.id) || r.label || r.id)
+      .join(", ");
+    return `No active ${pumpLabel} pump calibration on ${names}. Set one on Calibrations first.`;
+  }, [
+    connected,
+    experiment,
+    reactors,
+    manualPump,
+    activeCalibrations,
+    cultureLabels,
+  ]);
+
   const addPumpLogEntry = (msg) =>
     setPumpLog((prev) =>
       [{ time: new Date().toLocaleTimeString(), msg }, ...prev].slice(0, 50),
     );
 
   const handleManualDose = async () => {
+    if (manualDoseBlock) {
+      addPumpLogEntry(manualDoseBlock);
+      return;
+    }
     setPumpRunning(true);
     addPumpLogEntry(`Manual dose: ${manualPump} pump, ${pumpVolume} mL`);
     if (experiment && connected) {
@@ -4797,24 +4859,58 @@ export default function App() {
                     />
                     <button
                       onClick={handleManualDose}
-                      disabled={pumpRunning}
+                      disabled={pumpRunning || !!manualDoseBlock}
                       style={{
                         width: "100%",
                         padding: "12px",
                         borderRadius: 10,
                         border: "none",
-                        background: th.accent,
-                        color: "#fff",
+                        background: manualDoseBlock ? th.bgAlt : th.accent,
+                        color: manualDoseBlock ? th.textMuted : "#fff",
                         fontWeight: 700,
                         fontSize: 16,
-                        cursor: connected ? "pointer" : "not-allowed",
+                        cursor:
+                          pumpRunning || manualDoseBlock
+                            ? "not-allowed"
+                            : "pointer",
                         fontFamily: "inherit",
+                        opacity: manualDoseBlock ? 0.75 : 1,
                       }}
                     >
                       {pumpRunning
                         ? "Dosing..."
-                        : `Dose ${pumpVolume} mL (${manualPump.replace("_", " ")})`}
+                        : manualDoseBlock
+                          ? "Dosing unavailable"
+                          : `Dose ${pumpVolume} mL (${manualPump.replace("_", " ")})`}
                     </button>
+                    {manualDoseBlock && (
+                      <p
+                        style={{
+                          margin: "10px 0 0",
+                          fontSize: 15,
+                          color: th.textMuted,
+                          lineHeight: 1.6,
+                        }}
+                      >
+                        {manualDoseBlock}{" "}
+                        <button
+                          type="button"
+                          onClick={() => setPage("calibrations")}
+                          style={{
+                            background: "none",
+                            border: "none",
+                            color: th.accent,
+                            fontWeight: 600,
+                            fontSize: 15,
+                            cursor: "pointer",
+                            fontFamily: "inherit",
+                            padding: 0,
+                          }}
+                        >
+                          Calibrations
+                        </button>
+                      </p>
+                    )}
                   </div>
                 )}
 
@@ -5103,22 +5199,20 @@ export default function App() {
               ))}
             </div>
 
-            {/* Calibration reminder */}
+            {/* Calibration note */}
             <div
               style={{
                 marginTop: 16,
                 padding: "14px 18px",
                 background: th.bgAlt,
                 borderRadius: 10,
-                fontSize: 14,
-                color: th.textSecondary,
+                fontSize: 15,
+                color: th.textMuted,
                 lineHeight: 1.7,
               }}
             >
-              <span style={{ fontWeight: 700, color: th.text }}>
-                Calibration required:
-              </span>{" "}
-              Calibrate pumps on the Pi (Protocols or{" "}
+              Manual dosing is disabled until each target reactor has an active
+              pump calibration. Run{" "}
               <code
                 style={{
                   background: th.surface,
@@ -5126,12 +5220,12 @@ export default function App() {
                   borderRadius: 5,
                   fontFamily: "'JetBrains Mono',monospace",
                   fontSize: 13,
-                  color: th.accent,
+                  color: th.textSecondary,
                 }}
               >
                 pio calibrations run --device media_pump
-              </code>
-              ), then check status on the{" "}
+              </code>{" "}
+              on the Pi, then set it active on{" "}
               <button
                 type="button"
                 onClick={() => setPage("calibrations")}
@@ -5139,17 +5233,16 @@ export default function App() {
                   background: "none",
                   border: "none",
                   color: th.accent,
-                  fontWeight: 700,
+                  fontWeight: 600,
                   cursor: "pointer",
                   fontFamily: "inherit",
-                  textDecoration: "underline",
                   padding: 0,
-                  fontSize: 14,
+                  fontSize: 15,
                 }}
               >
                 Calibrations
-              </button>{" "}
-              tab before dosing.
+              </button>
+              .
             </div>
           </div>
         )}

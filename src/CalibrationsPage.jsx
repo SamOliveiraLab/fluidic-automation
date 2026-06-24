@@ -653,36 +653,6 @@ export default function CalibrationsPage({
           )}
         </div>
       </div>
-
-      {tab === "pumps" && !activeCals.media_pump && (
-        <p
-          style={{
-            margin: "16px 0 0",
-            fontSize: 15,
-            color: th.textMuted,
-            lineHeight: 1.6,
-          }}
-        >
-          Media pump has no active curve on {unitLabel(unitId)}.{" "}
-          <button
-            type="button"
-            onClick={onNavigatePumps}
-            style={{
-              background: "none",
-              border: "none",
-              color: th.accent,
-              fontWeight: 600,
-              fontSize: 15,
-              cursor: "pointer",
-              fontFamily: "inherit",
-              padding: 0,
-            }}
-          >
-            Pump Control
-          </button>{" "}
-          dosing may be off until you add one.
-        </p>
-      )}
     </div>
   );
 }
