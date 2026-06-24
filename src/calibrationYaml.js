@@ -49,6 +49,8 @@ const normalizeForExport = (cal, targetUnit) => {
   delete out.ok;
   delete out.unit;
   delete out.value;
+  // Pioreactor assigns created_at on import; quoted ISO strings fail validation.
+  delete out.created_at;
 
   if (targetUnit) out.calibrated_on_pioreactor_unit = targetUnit;
 
@@ -69,7 +71,6 @@ export const calToYaml = (cal, targetUnit) => {
     "calibration_type",
     "calibration_name",
     "calibrated_on_pioreactor_unit",
-    "created_at",
     "curve_data_",
     "x",
     "y",
