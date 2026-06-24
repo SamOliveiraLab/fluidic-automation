@@ -155,7 +155,6 @@ export default function CalibrationsPage({
   th,
   reactors,
   connected,
-  experimentName,
   getCultureLabel,
   showFeedback,
   onCalibrationsChanged,
@@ -840,7 +839,6 @@ export default function CalibrationsPage({
         open={wizardOpen}
         unitId={unitId}
         protocol={activeProtocol}
-        experimentName={experimentName}
         onClose={() => setWizardOpen(false)}
         onComplete={handleWizardComplete}
       />

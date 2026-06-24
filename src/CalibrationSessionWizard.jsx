@@ -94,7 +94,6 @@ export default function CalibrationSessionWizard({
   open,
   unitId,
   protocol,
-  experimentName,
   onClose,
   onComplete,
 }) {
@@ -236,7 +235,9 @@ export default function CalibrationSessionWizard({
     setLoading(true);
     setError("");
     try {
-      const exp = encodeURIComponent(experimentName || "$experiment");
+      // Calibration pump actions use Pioreactor's testing experiment, not the
+      // dashboard-selected experiment (worker may be unassigned to that exp).
+      const exp = encodeURIComponent("$experiment");
       const res = await apiMutate(
         `/api/workers/${encUnit}/jobs/run/job_name/${jobName}/experiments/${exp}`,
         "POST",
