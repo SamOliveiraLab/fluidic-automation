@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import CalibrationsPage from "./CalibrationsPage";
 import {
   AreaChart,
   Area,
@@ -2982,6 +2983,7 @@ export default function App() {
     { id: "temp", icon: "◈", label: "Temperature" },
     { id: "growth", icon: "↗", label: "Growth Rate" },
     { id: "pumps", icon: "⬡", label: "Pump Control" },
+    { id: "calibrations", icon: "⊕", label: "Calibrations" },
     { id: "logs", icon: "☰", label: "Logs" },
     { id: "alerts", icon: "△", label: "Alerts" },
   ];
@@ -4657,6 +4659,17 @@ export default function App() {
           </div>
         )}
 
+        {page === "calibrations" && (
+          <CalibrationsPage
+            th={th}
+            reactors={reactors}
+            connected={connected}
+            getCultureLabel={getCultureLabel}
+            showFeedback={showFeedback}
+            onNavigatePumps={() => setPage("pumps")}
+          />
+        )}
+
         {page === "pumps" && (
           <div style={{ padding: "24px" }}>
             {/* Mode Selector */}
@@ -5105,7 +5118,7 @@ export default function App() {
               <span style={{ fontWeight: 700, color: th.text }}>
                 Calibration required:
               </span>{" "}
-              SSH into the Pioreactor and run{" "}
+              Calibrate pumps on the Pi (Protocols or{" "}
               <code
                 style={{
                   background: th.surface,
@@ -5117,9 +5130,26 @@ export default function App() {
                 }}
               >
                 pio calibrations run --device media_pump
-              </code>{" "}
-              before using dosing automations. You need a scale accurate to
-              0.1g.
+              </code>
+              ), then check status on the{" "}
+              <button
+                type="button"
+                onClick={() => setPage("calibrations")}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: th.accent,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  textDecoration: "underline",
+                  padding: 0,
+                  fontSize: 14,
+                }}
+              >
+                Calibrations
+              </button>{" "}
+              tab before dosing.
             </div>
           </div>
         )}
