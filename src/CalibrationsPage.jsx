@@ -9,7 +9,8 @@ import {
   ResponsiveContainer,
   ComposedChart,
 } from "recharts";
-import { apiGet, apiMutate } from "./pioreactorApi";
+import { apiGet, apiMutate, apiErrorMessage } from "./pioreactorApi";
+import { calToYaml } from "./calibrationYaml";
 import CalibrationSessionWizard from "./CalibrationSessionWizard";
 import { protocolForDevice } from "./calibrationProtocols";
 import { generateCurveData, formatCurveLabel } from "./curveUtils";
@@ -52,40 +53,6 @@ const calibrationChartData = (cal) => {
   }));
   const fit = generateCurveData(cal, 50).map((p) => ({ ...p, kind: "fit" }));
   return { points, fit };
-};
-
-/** Minimal YAML for POST /calibrations/{device} (copy between reactors). */
-const calToYaml = (cal) => {
-  const strip = { ...cal };
-  delete strip.is_active;
-  delete strip.pioreactor_unit;
-  const lines = [];
-  const walk = (obj, indent = 0) => {
-    const pad = "  ".repeat(indent);
-    for (const [k, v] of Object.entries(obj)) {
-      if (v == null) continue;
-      if (Array.isArray(v)) {
-        lines.push(`${pad}${k}:`);
-        v.forEach((item) => {
-          if (typeof item === "object") {
-            lines.push(`${pad}  -`);
-            walk(item, indent + 2);
-          } else {
-            lines.push(`${pad}  - ${item}`);
-          }
-        });
-      } else if (typeof v === "object") {
-        lines.push(`${pad}${k}:`);
-        walk(v, indent + 1);
-      } else if (typeof v === "string") {
-        lines.push(`${pad}${k}: ${JSON.stringify(v)}`);
-      } else {
-        lines.push(`${pad}${k}: ${v}`);
-      }
-    }
-  };
-  walk(strip);
-  return lines.join("\n");
 };
 
 const CalChart = ({ cal, th }) => {
@@ -269,17 +236,18 @@ export default function CalibrationsPage({
   const copyToUnit = async () => {
     if (!selectedDetail || !copyTarget || copyTarget === unitId) return;
     setBusy(true);
-    const yaml = calToYaml(selectedDetail);
+    const yaml = calToYaml(selectedDetail, copyTarget);
     const post = await apiMutate(
       `/api/workers/${encodeURIComponent(copyTarget)}/calibrations/${device}`,
       "POST",
-      { calibration_data: yaml },
+      { calibration_data: yaml, set_as_active: true },
     );
     if (!post.ok) {
       setBusy(false);
       showFeedback(
         "Copy failed",
-        `Could not upload to ${copyTarget} (HTTP ${post.status}).`,
+        apiErrorMessage(post.data, post.status) ||
+          `Could not upload to ${copyTarget} (HTTP ${post.status}).`,
         "error",
       );
       return;
