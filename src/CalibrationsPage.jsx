@@ -105,7 +105,7 @@ const CalChart = ({ cal, th }) => {
   const { points, fit } = useMemo(() => calibrationChartData(cal), [cal]);
   if (!points.length) {
     return (
-      <div style={{ padding: 24, textAlign: "center", color: th.textMuted }}>
+      <div style={{ padding: 24, textAlign: "center", color: th.textMuted, fontSize: 16 }}>
         No recorded data for this curve.
       </div>
     );
@@ -118,25 +118,25 @@ const CalChart = ({ cal, th }) => {
         <XAxis
           dataKey="x"
           type="number"
-          tick={{ fontSize: 11, fill: th.textMuted }}
+          tick={{ fontSize: 12, fill: th.textMuted }}
           label={{
             value: cal.x || "x",
             position: "insideBottom",
             offset: -2,
-            fontSize: 11,
+            fontSize: 12,
             fill: th.textMuted,
           }}
         />
         <YAxis
           dataKey="y"
           type="number"
-          tick={{ fontSize: 11, fill: th.textMuted }}
+          tick={{ fontSize: 12, fill: th.textMuted }}
           width={48}
           label={{
             value: cal.y || "y",
             angle: -90,
             position: "insideLeft",
-            fontSize: 11,
+            fontSize: 12,
             fill: th.textMuted,
           }}
         />
@@ -145,7 +145,7 @@ const CalChart = ({ cal, th }) => {
             background: th.surface,
             border: `1px solid ${th.border}`,
             borderRadius: 8,
-            fontSize: 13,
+            fontSize: 14,
           }}
         />
         {fit.length > 0 && (
@@ -311,13 +311,13 @@ export default function CalibrationsPage({
   };
 
   const btn = (primary) => ({
-    padding: "6px 12px",
-    borderRadius: 7,
+    padding: primary ? "8px 14px" : "6px 14px",
+    borderRadius: primary ? 8 : 7,
     border: primary ? "none" : `1px solid ${th.border}`,
     background: primary ? th.accent : th.bgAlt,
     color: primary ? "#fff" : th.textSecondary,
-    fontSize: 13,
-    fontWeight: 700,
+    fontSize: 15,
+    fontWeight: primary ? 700 : 600,
     cursor: busy ? "not-allowed" : "pointer",
     fontFamily: "inherit",
     opacity: busy ? 0.6 : 1,
@@ -331,65 +331,74 @@ export default function CalibrationsPage({
           flexWrap: "wrap",
           gap: 12,
           alignItems: "center",
+          justifyContent: "space-between",
           marginBottom: 20,
         }}
       >
-        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: th.text }}>
-          Calibrations
-        </h2>
-        <select
-          value={unitId}
-          onChange={(e) => {
-            setUnitId(e.target.value);
-            setSelectedName(null);
-            setSelectedDetail(null);
-          }}
-          style={{
-            padding: "8px 12px",
-            borderRadius: 8,
-            border: `1px solid ${th.border}`,
-            background: th.bgAlt,
-            color: th.text,
-            fontSize: 15,
-            fontWeight: 600,
-            fontFamily: "inherit",
-          }}
-        >
-          {units.map((r) => (
-            <option key={r.id} value={r.id}>
-              {unitLabel(r.id)}
-            </option>
-          ))}
-        </select>
-        <button onClick={load} disabled={loading || !connected} style={btn(false)}>
-          {loading ? "Loading…" : "Refresh"}
-        </button>
-        {!connected && (
-          <span style={{ fontSize: 14, color: th.danger }}>Pioreactor offline</span>
-        )}
+        <div>
+          <h2
+            style={{
+              margin: 0,
+              fontSize: 20,
+              fontWeight: 700,
+              color: th.text,
+            }}
+          >
+            Calibrations
+          </h2>
+          <p style={{ margin: "4px 0 0", fontSize: 16, color: th.textMuted }}>
+            One active curve per device per reactor. Create on the Pi; manage and
+            share here.
+          </p>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <select
+            value={unitId}
+            onChange={(e) => {
+              setUnitId(e.target.value);
+              setSelectedName(null);
+              setSelectedDetail(null);
+            }}
+            style={{
+              padding: "8px 12px",
+              borderRadius: 8,
+              border: `1px solid ${th.border}`,
+              background: th.bgAlt,
+              color: th.text,
+              fontSize: 15,
+              fontWeight: 600,
+              fontFamily: "inherit",
+            }}
+          >
+            {units.map((r) => (
+              <option key={r.id} value={r.id}>
+                {unitLabel(r.id)}
+              </option>
+            ))}
+          </select>
+          <button onClick={load} disabled={loading || !connected} style={btn(false)}>
+            {loading ? "Loading…" : "↻ Refresh"}
+          </button>
+          {!connected && (
+            <span style={{ fontSize: 15, color: th.danger }}>Pioreactor offline</span>
+          )}
+        </div>
       </div>
 
-      <p style={{ margin: "0 0 16px", fontSize: 14, color: th.textMuted, lineHeight: 1.6 }}>
-        One active calibration per device per reactor. Pumps need calibration before
-        accurate dosing. Create new curves on the Pi (Protocols or{" "}
-        <code style={{ fontSize: 12 }}>pio calibrations run</code>); manage and share
-        them here.
-      </p>
-
       {/* Tabs */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+      <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
         {TABS.map((t) => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
             style={{
-              padding: "8px 16px",
-              borderRadius: 8,
+              padding: "10px 20px",
+              borderRadius: 10,
               border: `1.5px solid ${tab === t.id ? th.accent : th.border}`,
               background: tab === t.id ? th.accentLight : th.surface,
               color: tab === t.id ? th.accent : th.textSecondary,
               fontWeight: 700,
-              fontSize: 14,
+              fontSize: 15,
               cursor: "pointer",
               fontFamily: "inherit",
             }}
@@ -428,12 +437,12 @@ export default function CalibrationsPage({
                 fontFamily: "inherit",
               }}
             >
-              <div style={{ fontSize: 13, fontWeight: 700, color: th.text }}>
+              <div style={{ fontSize: 15, fontWeight: 600, color: th.text }}>
                 {d.label}
               </div>
               <div
                 style={{
-                  fontSize: 12,
+                  fontSize: 13,
                   marginTop: 4,
                   color: ok ? th.success : th.warning,
                   fontWeight: 600,
@@ -461,21 +470,22 @@ export default function CalibrationsPage({
             border: `1px solid ${th.border}`,
             borderRadius: 14,
             overflow: "hidden",
+            boxShadow: th.shadow,
           }}
         >
           <div
             style={{
-              padding: "14px 16px",
+              padding: "18px 22px",
               borderBottom: `1px solid ${th.borderLight}`,
               fontWeight: 700,
-              fontSize: 15,
+              fontSize: 16,
               color: th.text,
             }}
           >
             {deviceLabel(device)} — saved curves
           </div>
           {calsForDevice.length === 0 ? (
-            <div style={{ padding: 20, fontSize: 14, color: th.textMuted }}>
+            <div style={{ padding: 20, fontSize: 16, color: th.textMuted }}>
               No calibrations saved for this device on {unitLabel(unitId)}.
             </div>
           ) : (
@@ -500,7 +510,7 @@ export default function CalibrationsPage({
                     fontFamily: "inherit",
                   }}
                 >
-                  <div style={{ fontWeight: 700, fontSize: 14, color: th.text }}>
+                  <div style={{ fontWeight: 600, fontSize: 15, color: th.text }}>
                     {name}
                     {isActive && (
                       <span
@@ -508,14 +518,14 @@ export default function CalibrationsPage({
                           marginLeft: 8,
                           fontSize: 11,
                           color: th.success,
-                          fontWeight: 700,
+                          fontWeight: 600,
                         }}
                       >
                         ACTIVE
                       </span>
                     )}
                   </div>
-                  <div style={{ fontSize: 12, color: th.textMuted, marginTop: 2 }}>
+                  <div style={{ fontSize: 13, color: th.textMuted, marginTop: 2 }}>
                     {c.created_at
                       ? new Date(c.created_at).toLocaleDateString()
                       : "—"}
@@ -535,8 +545,9 @@ export default function CalibrationsPage({
             background: th.surface,
             border: `1px solid ${th.border}`,
             borderRadius: 14,
-            padding: "16px 18px",
+            padding: "22px 24px",
             minHeight: 280,
+            boxShadow: th.shadow,
           }}
         >
           {!selectedDetail ? (
@@ -545,7 +556,7 @@ export default function CalibrationsPage({
                 padding: 40,
                 textAlign: "center",
                 color: th.textMuted,
-                fontSize: 14,
+                fontSize: 16,
               }}
             >
               Select a calibration to view its curve.
@@ -563,10 +574,10 @@ export default function CalibrationsPage({
                 }}
               >
                 <div>
-                  <div style={{ fontSize: 17, fontWeight: 800, color: th.text }}>
+                  <div style={{ fontSize: 19, fontWeight: 700, color: th.text }}>
                     {selectedDetail.calibration_name}
                   </div>
-                  <div style={{ fontSize: 13, color: th.textMuted }}>
+                  <div style={{ fontSize: 15, color: th.textMuted, marginTop: 2 }}>
                     {selectedDetail.x} → {selectedDetail.y}
                     {selectedDetail.curve_type
                       ? ` · ${selectedDetail.curve_type}`
@@ -602,8 +613,8 @@ export default function CalibrationsPage({
                 >
                   <div
                     style={{
-                      fontSize: 13,
-                      fontWeight: 700,
+                      fontSize: 14,
+                      fontWeight: 600,
                       color: th.textSecondary,
                       marginBottom: 8,
                     }}
@@ -617,10 +628,13 @@ export default function CalibrationsPage({
                       style={{
                         flex: 1,
                         minWidth: 140,
-                        padding: "8px 10px",
+                        padding: "8px 12px",
                         borderRadius: 8,
                         border: `1px solid ${th.border}`,
                         background: th.bgAlt,
+                        color: th.text,
+                        fontSize: 15,
+                        fontWeight: 600,
                         fontFamily: "inherit",
                       }}
                     >
@@ -644,8 +658,9 @@ export default function CalibrationsPage({
                   <p
                     style={{
                       margin: "8px 0 0",
-                      fontSize: 12,
+                      fontSize: 15,
                       color: th.textMuted,
+                      lineHeight: 1.6,
                     }}
                   >
                     Uploads this YAML to the target Pi and sets it active. Best when
@@ -667,8 +682,9 @@ export default function CalibrationsPage({
             borderRadius: 10,
             background: th.warningBg,
             border: `1px solid ${th.warning}40`,
-            fontSize: 14,
+            fontSize: 15,
             color: th.textSecondary,
+            lineHeight: 1.6,
           }}
         >
           <strong style={{ color: th.warning }}>Media pump not calibrated</strong> on{" "}
@@ -680,7 +696,8 @@ export default function CalibrationsPage({
               background: "none",
               border: "none",
               color: th.accent,
-              fontWeight: 700,
+              fontWeight: 600,
+              fontSize: 15,
               cursor: "pointer",
               fontFamily: "inherit",
               textDecoration: "underline",
