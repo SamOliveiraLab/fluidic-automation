@@ -339,6 +339,7 @@ const usePioreactorData = () => {
     latestByKey: {},
   });
   const [logs, setLogs] = useState([]);
+  const [fetchError, setFetchError] = useState(null);
   const [lastFetch, setLastFetch] = useState(null);
   const [timeRange, setTimeRange] = useState({ start: "", end: "" });
   const timeRangeRef = useRef(timeRange);
@@ -385,8 +386,28 @@ const usePioreactorData = () => {
     // Don't setReactors yet - wait until after telemetry check to avoid flicker
 
     // 2. Fetch experiments and select
-    const expsRaw = await api("/api/experiments");
+    let expsRaw = null;
+    try {
+      const expsRes = await pioFetch(buildApiUrl("/api/experiments"));
+      if (expsRes.ok) {
+        expsRaw = await expsRes.json();
+        setFetchError(null);
+      } else {
+        let msg = `Experiments API failed (HTTP ${expsRes.status})`;
+        try {
+          const errBody = await expsRes.json();
+          if (errBody?.error) msg = errBody.error;
+        } catch {
+          /* ignore */
+        }
+        setFetchError(msg);
+      }
+    } catch (e) {
+      setFetchError(e.message || "Could not load experiments");
+    }
     if (!expsRaw?.length) {
+      setAllExperiments([]);
+      setExperiment(null);
       setReactors(withOverrides);
       setLoading(false);
       return;
@@ -907,6 +928,7 @@ const usePioreactorData = () => {
     assignReactor,
     unassignReactor,
     refresh: fetchAll,
+    fetchError,
     activeCalibrations,
   };
 };
@@ -2506,6 +2528,7 @@ export default function App() {
     setTimeRange,
     refresh,
     activeCalibrations,
+    fetchError,
   } = usePioreactorData();
 
   // Culture labels: stored per experiment in localStorage
@@ -3804,6 +3827,32 @@ export default function App() {
             </div>
           </div>
         </div>
+
+        {fetchError && (
+          <div
+            style={{
+              margin: "0 24px 0",
+              padding: "12px 16px",
+              borderRadius: 10,
+              background: th.dangerBg,
+              border: `1px solid ${th.danger}40`,
+              color: th.danger,
+              fontSize: 15,
+              lineHeight: 1.5,
+            }}
+          >
+            <strong>Experiments could not load:</strong> {fetchError}
+            {fetchError.includes("experiment_tags") && (
+              <span>
+                {" "}
+                This usually happens after a Pioreactor update. On the leader Pi run:{" "}
+                <code style={{ fontSize: 13 }}>pio db</code> then create the{" "}
+                <code style={{ fontSize: 13 }}>experiment_tags</code> table (see docs
+                or chat).
+              </span>
+            )}
+          </div>
+        )}
 
         {page === "overview" && (
           <div
