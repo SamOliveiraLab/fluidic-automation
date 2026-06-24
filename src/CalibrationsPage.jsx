@@ -12,6 +12,7 @@ import {
 import { apiGet, apiMutate } from "./pioreactorApi";
 import CalibrationSessionWizard from "./CalibrationSessionWizard";
 import { protocolForDevice } from "./calibrationProtocols";
+import { generateCurveData, formatCurveLabel } from "./curveUtils";
 
 const TABS = [
   { id: "pumps", label: "Pumps" },
@@ -40,7 +41,7 @@ const deviceLabel = (id) => {
   return id;
 };
 
-/** Build scatter + optional polynomial fit from Pioreactor calibration object. */
+/** Build scatter + fit line from Pioreactor calibration object. */
 const calibrationChartData = (cal) => {
   const xs = cal?.recorded_data?.x || [];
   const ys = cal?.recorded_data?.y || [];
@@ -49,23 +50,7 @@ const calibrationChartData = (cal) => {
     y: Number(ys[i]),
     kind: "measured",
   }));
-  const coeffs = cal?.curve_data_;
-  if (!coeffs?.length || !points.length) return { points, fit: [] };
-
-  const xsNum = points.map((p) => p.x);
-  const minX = Math.min(...xsNum);
-  const maxX = Math.max(...xsNum);
-  const pad = (maxX - minX) * 0.05 || 0.1;
-  const steps = 40;
-  const fit = [];
-  for (let i = 0; i <= steps; i++) {
-    const x = minX - pad + ((maxX + pad - (minX - pad)) * i) / steps;
-    let y = 0;
-    for (let c = 0; c < coeffs.length; c++) {
-      y += Number(coeffs[c]) * x ** c;
-    }
-    fit.push({ x, y, kind: "fit" });
-  }
+  const fit = generateCurveData(cal, 50).map((p) => ({ ...p, kind: "fit" }));
   return { points, fit };
 };
 
@@ -203,6 +188,11 @@ export default function CalibrationsPage({
     if (!list.find((d) => d.id === device)) setDevice(list[0].id);
   }, [tab, device]);
 
+  useEffect(() => {
+    setSelectedName(null);
+    setSelectedDetail(null);
+  }, [device, unitId]);
+
   const load = useCallback(async () => {
     if (!unitId || !connected) return;
     setLoading(true);
@@ -237,6 +227,11 @@ export default function CalibrationsPage({
     );
     setSelectedDetail(detail || null);
   };
+
+  useEffect(() => {
+    if (!activeName || selectedName) return;
+    openDetail(activeName);
+  }, [activeName, unitId, device, selectedName]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const setActive = async (name) => {
     if (!unitId || !name) return;
@@ -612,31 +607,161 @@ export default function CalibrationsPage({
                 <div>
                   <div style={{ fontSize: 19, fontWeight: 700, color: th.text }}>
                     {selectedDetail.calibration_name}
+                    {(activeName === selectedDetail.calibration_name ||
+                      selectedDetail.is_active) && (
+                      <span
+                        style={{
+                          marginLeft: 10,
+                          fontSize: 12,
+                          fontWeight: 600,
+                          color: th.success || "#2d8a4e",
+                          letterSpacing: "0.04em",
+                        }}
+                      >
+                        active
+                      </span>
+                    )}
                   </div>
                   <div style={{ fontSize: 15, color: th.textMuted, marginTop: 2 }}>
-                    {selectedDetail.x} / {selectedDetail.y}
-                    {selectedDetail.curve_type
-                      ? ` · ${selectedDetail.curve_type}`
-                      : ""}
+                    {unitLabel(unitId)} / {deviceLabel(device)}
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  <button
-                    style={btn(true)}
-                    disabled={busy}
-                    onClick={() => setActive(selectedDetail.calibration_name)}
-                  >
-                    Set active
-                  </button>
-                  {activeName === selectedDetail.calibration_name && (
+                  {activeName === selectedDetail.calibration_name ||
+                  selectedDetail.is_active ? (
                     <button style={btn(false)} disabled={busy} onClick={clearActive}>
-                      Clear active
+                      Set inactive
+                    </button>
+                  ) : (
+                    <button
+                      style={btn(true)}
+                      disabled={busy}
+                      onClick={() => setActive(selectedDetail.calibration_name)}
+                    >
+                      Set active
                     </button>
                   )}
                 </div>
               </div>
 
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
+                  gap: "10px 16px",
+                  marginBottom: 16,
+                  fontSize: 14,
+                }}
+              >
+                {selectedDetail.created_at && (
+                  <div>
+                    <div style={{ color: th.textMuted, marginBottom: 2 }}>Created</div>
+                    <div style={{ color: th.textSecondary, fontWeight: 600 }}>
+                      {new Date(selectedDetail.created_at).toLocaleString()}
+                    </div>
+                  </div>
+                )}
+                {selectedDetail.calibration_type && (
+                  <div>
+                    <div style={{ color: th.textMuted, marginBottom: 2 }}>Type</div>
+                    <div style={{ color: th.textSecondary, fontWeight: 600 }}>
+                      {selectedDetail.calibration_type}
+                    </div>
+                  </div>
+                )}
+                <div>
+                  <div style={{ color: th.textMuted, marginBottom: 2 }}>Axes</div>
+                  <div style={{ color: th.textSecondary, fontWeight: 600 }}>
+                    {selectedDetail.x || "x"} / {selectedDetail.y || "y"}
+                  </div>
+                </div>
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <div style={{ color: th.textMuted, marginBottom: 2 }}>Fit curve</div>
+                  <div
+                    style={{
+                      color: th.textSecondary,
+                      fontWeight: 600,
+                      fontFamily: "ui-monospace, monospace",
+                      fontSize: 13,
+                    }}
+                  >
+                    {formatCurveLabel(selectedDetail)}
+                  </div>
+                </div>
+              </div>
+
               <CalChart cal={selectedDetail} th={th} />
+
+              {selectedDetail.recorded_data?.x?.length > 0 && (
+                <div style={{ marginTop: 16 }}>
+                  <div
+                    style={{
+                      fontSize: 14,
+                      fontWeight: 600,
+                      color: th.textSecondary,
+                      marginBottom: 8,
+                    }}
+                  >
+                    Recorded data
+                  </div>
+                  <div
+                    style={{
+                      maxHeight: 180,
+                      overflowY: "auto",
+                      border: `1px solid ${th.borderLight}`,
+                      borderRadius: 8,
+                    }}
+                  >
+                    <table
+                      style={{
+                        width: "100%",
+                        borderCollapse: "collapse",
+                        fontSize: 14,
+                      }}
+                    >
+                      <thead>
+                        <tr style={{ background: th.bgAlt }}>
+                          <th
+                            style={{
+                              textAlign: "left",
+                              padding: "8px 12px",
+                              color: th.textMuted,
+                              fontWeight: 600,
+                            }}
+                          >
+                            {selectedDetail.x || "x"}
+                          </th>
+                          <th
+                            style={{
+                              textAlign: "left",
+                              padding: "8px 12px",
+                              color: th.textMuted,
+                              fontWeight: 600,
+                            }}
+                          >
+                            {selectedDetail.y || "y"}
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedDetail.recorded_data.x.map((xVal, idx) => (
+                          <tr
+                            key={idx}
+                            style={{ borderTop: `1px solid ${th.borderLight}` }}
+                          >
+                            <td style={{ padding: "6px 12px", color: th.text }}>
+                              {xVal}
+                            </td>
+                            <td style={{ padding: "6px 12px", color: th.text }}>
+                              {selectedDetail.recorded_data.y?.[idx] ?? ""}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
 
               {/* Copy to another reactor */}
               {units.length > 1 && (
