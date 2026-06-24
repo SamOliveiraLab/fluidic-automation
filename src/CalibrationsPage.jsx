@@ -292,7 +292,7 @@ export default function CalibrationsPage({
     if (patch.ok) {
       showFeedback(
         "Copied & activated",
-        `${name} → ${copyTarget} (${deviceLabel(device)})`,
+        `${name} copied to ${copyTarget} (${deviceLabel(device)})`,
         "success",
       );
       setCopyTarget("");
@@ -347,8 +347,7 @@ export default function CalibrationsPage({
             Calibrations
           </h2>
           <p style={{ margin: "4px 0 0", fontSize: 16, color: th.textMuted }}>
-            One active curve per device per reactor. Create on the Pi; manage and
-            share here.
+            Manage pump, stirring, and OD curves per reactor.
           </p>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -408,51 +407,28 @@ export default function CalibrationsPage({
         ))}
       </div>
 
-      {/* Status cards */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
-          gap: 10,
-          marginBottom: 20,
-        }}
-      >
-        {deviceList.map((d) => {
-          const active =
-            activeCals[d.id]?.calibration_name ||
-            (allCals[d.id] || []).find((c) => c.is_active)?.calibration_name;
-          const ok = !!active;
-          return (
-            <button
-              key={d.id}
-              type="button"
-              onClick={() => setDevice(d.id)}
-              style={{
-                textAlign: "left",
-                padding: "12px 14px",
-                borderRadius: 10,
-                border: `1.5px solid ${device === d.id ? th.accent : th.border}`,
-                background: device === d.id ? th.accentLight : th.surface,
-                cursor: "pointer",
-                fontFamily: "inherit",
-              }}
-            >
-              <div style={{ fontSize: 15, fontWeight: 600, color: th.text }}>
-                {d.label}
-              </div>
-              <div
-                style={{
-                  fontSize: 13,
-                  marginTop: 4,
-                  color: ok ? th.success : th.warning,
-                  fontWeight: 600,
-                }}
-              >
-                {ok ? `Active: ${active}` : "No active calibration"}
-              </div>
-            </button>
-          );
-        })}
+      {/* Device picker */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 20, flexWrap: "wrap" }}>
+        {deviceList.map((d) => (
+          <button
+            key={d.id}
+            type="button"
+            onClick={() => setDevice(d.id)}
+            style={{
+              padding: "8px 16px",
+              borderRadius: 8,
+              border: `1.5px solid ${device === d.id ? th.accent : th.border}`,
+              background: device === d.id ? th.accentLight : "transparent",
+              color: device === d.id ? th.accent : th.textSecondary,
+              fontWeight: 600,
+              fontSize: 14,
+              cursor: "pointer",
+              fontFamily: "inherit",
+            }}
+          >
+            {d.label}
+          </button>
+        ))}
       </div>
 
       <div
@@ -477,12 +453,16 @@ export default function CalibrationsPage({
             style={{
               padding: "18px 22px",
               borderBottom: `1px solid ${th.borderLight}`,
-              fontWeight: 700,
-              fontSize: 16,
-              color: th.text,
             }}
           >
-            {deviceLabel(device)} — saved curves
+            <div style={{ fontWeight: 700, fontSize: 16, color: th.text }}>
+              Saved curves
+            </div>
+            <div style={{ fontSize: 15, color: th.textMuted, marginTop: 2 }}>
+              {activeName
+                ? `Active: ${activeName}`
+                : `No active curve for ${deviceLabel(device).toLowerCase()}`}
+            </div>
           </div>
           {calsForDevice.length === 0 ? (
             <div style={{ padding: 20, fontSize: 16, color: th.textMuted }}>
@@ -517,18 +497,19 @@ export default function CalibrationsPage({
                         style={{
                           marginLeft: 8,
                           fontSize: 11,
-                          color: th.success,
+                          color: th.textMuted,
                           fontWeight: 600,
+                          letterSpacing: "0.06em",
                         }}
                       >
-                        ACTIVE
+                        active
                       </span>
                     )}
                   </div>
                   <div style={{ fontSize: 13, color: th.textMuted, marginTop: 2 }}>
                     {c.created_at
                       ? new Date(c.created_at).toLocaleDateString()
-                      : "—"}
+                      : ""}
                     {c.calibrated_on_pioreactor_unit
                       ? ` · ${c.calibrated_on_pioreactor_unit}`
                       : ""}
@@ -578,7 +559,7 @@ export default function CalibrationsPage({
                     {selectedDetail.calibration_name}
                   </div>
                   <div style={{ fontSize: 15, color: th.textMuted, marginTop: 2 }}>
-                    {selectedDetail.x} → {selectedDetail.y}
+                    {selectedDetail.x} / {selectedDetail.y}
                     {selectedDetail.curve_type
                       ? ` · ${selectedDetail.curve_type}`
                       : ""}
@@ -673,22 +654,16 @@ export default function CalibrationsPage({
         </div>
       </div>
 
-      {/* Pump dosing link */}
       {tab === "pumps" && !activeCals.media_pump && (
-        <div
+        <p
           style={{
-            marginTop: 20,
-            padding: "14px 16px",
-            borderRadius: 10,
-            background: th.warningBg,
-            border: `1px solid ${th.warning}40`,
+            margin: "16px 0 0",
             fontSize: 15,
-            color: th.textSecondary,
+            color: th.textMuted,
             lineHeight: 1.6,
           }}
         >
-          <strong style={{ color: th.warning }}>Media pump not calibrated</strong> on{" "}
-          {unitLabel(unitId)}. Manual dosing on{" "}
+          Media pump has no active curve on {unitLabel(unitId)}.{" "}
           <button
             type="button"
             onClick={onNavigatePumps}
@@ -700,14 +675,13 @@ export default function CalibrationsPage({
               fontSize: 15,
               cursor: "pointer",
               fontFamily: "inherit",
-              textDecoration: "underline",
               padding: 0,
             }}
           >
             Pump Control
           </button>{" "}
-          may be inaccurate until you calibrate or copy a curve from another reactor.
-        </div>
+          dosing may be off until you add one.
+        </p>
       )}
     </div>
   );
