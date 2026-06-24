@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import CalibrationsPage from "./CalibrationsPage";
+import { apiGet as workerApiGet } from "./pioreactorApi";
 import {
   AreaChart,
   Area,
@@ -495,7 +496,10 @@ const usePioreactorData = () => {
       .map((r) => r.id);
     const calEntries = await Promise.all(
       connectedIds.map((id) =>
-        api(`/api/workers/${encodeURIComponent(id)}/active_calibrations`),
+        workerApiGet(
+          `/api/workers/${encodeURIComponent(id)}/active_calibrations`,
+          { unitId: id },
+        ),
       ),
     );
     const calsByUnit = {};

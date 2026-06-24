@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { apiGet, apiMutate } from "./pioreactorApi";
+import { apiGet, apiMutate, apiErrorMessage } from "./pioreactorApi";
 
 const buildInitialValues = (step) => {
   const nextValues = {};
@@ -136,12 +136,7 @@ export default function CalibrationSessionWizard({
         },
       );
       if (!res.ok) {
-        const msg =
-          res.data?.error ||
-          res.data?.description ||
-          (typeof res.data === "string" ? res.data : null) ||
-          `Could not start session (HTTP ${res.status})`;
-        throw new Error(msg);
+        throw new Error(apiErrorMessage(res.data, res.status));
       }
       const id = res.data?.session?.session_id;
       if (!id) throw new Error("Session started without an id.");
@@ -181,11 +176,7 @@ export default function CalibrationSessionWizard({
         { inputs },
       );
       if (!res.ok) {
-        const msg =
-          res.data?.error ||
-          res.data?.description ||
-          `Step failed (HTTP ${res.status})`;
-        throw new Error(msg);
+        throw new Error(apiErrorMessage(res.data, res.status));
       }
       applyPayload(res.data);
       if (res.data?.session) setSession(res.data.session);

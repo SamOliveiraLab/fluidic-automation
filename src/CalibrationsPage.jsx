@@ -208,8 +208,8 @@ export default function CalibrationsPage({
     setLoading(true);
     const enc = encodeURIComponent(unitId);
     const [all, active] = await Promise.all([
-      apiGet(`/api/workers/${enc}/calibrations`),
-      apiGet(`/api/workers/${enc}/active_calibrations`),
+      apiGet(`/api/workers/${enc}/calibrations`, { unitId }),
+      apiGet(`/api/workers/${enc}/active_calibrations`, { unitId }),
     ]);
     setAllCals(all && typeof all === "object" ? all : {});
     setActiveCals(active && typeof active === "object" ? active : {});
@@ -233,6 +233,7 @@ export default function CalibrationsPage({
     const enc = encodeURIComponent(unitId);
     const detail = await apiGet(
       `/api/workers/${enc}/calibrations/${device}/${encodeURIComponent(name)}`,
+      { unitId },
     );
     setSelectedDetail(detail || null);
   };

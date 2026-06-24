@@ -28,12 +28,47 @@ export const pioFetch = (url, opts = {}) =>
     headers: { ...NGROK_HEADERS, ...opts.headers },
   });
 
-/** GET JSON; returns null on failure. */
-export const apiGet = async (path) => {
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** Unwrap fanout result: { unitId: payload } → payload */
+const unwrapWorkerResult = (payload, unitId) => {
+  if (!payload || typeof payload !== "object" || !unitId) return payload;
+  if (unitId in payload && Object.keys(payload).length <= 2) {
+    return payload[unitId];
+  }
+  return payload;
+};
+
+/**
+ * Poll GET /unit_api/task_results/{id} until complete.
+ * Many worker endpoints return 202 + result_url_path instead of data inline.
+ */
+export const pollTaskResult = async (resultPath, { attempts = 12, delayMs = 400 } = {}) => {
+  if (!resultPath) return null;
+  for (let i = 0; i < attempts; i++) {
+    const res = await pioFetch(buildApiUrl(resultPath));
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data?.status === "complete") return data.result ?? null;
+    if (data?.status === "failed") return null;
+    await sleep(delayMs);
+  }
+  return null;
+};
+
+/** GET JSON; follows async task dispatch when present. */
+export const apiGet = async (path, { unitId } = {}) => {
   try {
     const res = await pioFetch(buildApiUrl(path));
     if (!res.ok) throw new Error(res.statusText);
-    return await res.json();
+    const data = await res.json();
+
+    if (data?.result_url_path) {
+      const result = await pollTaskResult(data.result_url_path);
+      return unwrapWorkerResult(result, unitId);
+    }
+
+    return unwrapWorkerResult(data, unitId);
   } catch (e) {
     console.warn(`API GET failed: ${path}`, e.message);
     return null;
@@ -61,4 +96,22 @@ export const apiMutate = async (path, method, body) => {
   } catch (e) {
     return { ok: false, status: 0, data: { error: e.message } };
   }
+};
+
+/** Extract a human-readable error from Pioreactor JSON or HTML error bodies. */
+export const apiErrorMessage = (data, status) => {
+  if (!data) return `Request failed (HTTP ${status})`;
+  if (typeof data === "string") {
+    if (data.includes("internal error")) {
+      return "Pioreactor returned a server error. Try updating software on that unit (pio update), or run calibration from the Pi UI.";
+    }
+    return data.slice(0, 240);
+  }
+  return (
+    data.error ||
+    data.description ||
+    data.cause ||
+    data.remediation ||
+    `Request failed (HTTP ${status})`
+  );
 };
