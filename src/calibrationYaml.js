@@ -1,6 +1,14 @@
 /** Build Pioreactor-compatible calibration YAML for POST /calibrations/{device}. */
 
-const yamlScalar = (value) => {
+/** msgspec/PyYAML require native datetime (unquoted); quoted ISO strings fail validation. */
+export const formatYamlDatetime = (value) => {
+  const d = value ? new Date(value) : new Date();
+  if (Number.isNaN(d.getTime())) return new Date().toISOString();
+  return d.toISOString();
+};
+
+const yamlScalar = (value, key) => {
+  if (key === "created_at") return formatYamlDatetime(value);
   if (typeof value === "number") return Number.isFinite(value) ? String(value) : "0";
   if (typeof value === "boolean") return value ? "true" : "false";
   if (value === "") return '""';
@@ -33,7 +41,7 @@ const yamlLines = (value, indent = 0) => {
         lines.push(`${pad}${key}:`);
         lines.push(...yamlLines(child, indent + 1));
       } else {
-        lines.push(`${pad}${key}: ${yamlScalar(child)}`);
+        lines.push(`${pad}${key}: ${yamlScalar(child, key)}`);
       }
     }
     return lines;
@@ -49,10 +57,9 @@ const normalizeForExport = (cal, targetUnit) => {
   delete out.ok;
   delete out.unit;
   delete out.value;
-  // Pioreactor assigns created_at on import; quoted ISO strings fail validation.
-  delete out.created_at;
 
   if (targetUnit) out.calibrated_on_pioreactor_unit = targetUnit;
+  if (!out.created_at) out.created_at = new Date().toISOString();
 
   if (Array.isArray(out.curve_data_)) {
     out.curve_data_ = {
@@ -71,6 +78,7 @@ export const calToYaml = (cal, targetUnit) => {
     "calibration_type",
     "calibration_name",
     "calibrated_on_pioreactor_unit",
+    "created_at",
     "curve_data_",
     "x",
     "y",
@@ -84,6 +92,11 @@ export const calToYaml = (cal, targetUnit) => {
 
   for (const key of order) {
     if (!(key in payload)) continue;
+    if (key === "created_at") {
+      lines.push(`${key}: ${formatYamlDatetime(payload[key])}`);
+      seen.add(key);
+      continue;
+    }
     lines.push(`${key}:`);
     lines.push(...yamlLines(payload[key], 1));
     seen.add(key);
