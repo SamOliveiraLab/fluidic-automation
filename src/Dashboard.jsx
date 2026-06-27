@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import CalibrationsPage from "./CalibrationsPage";
-import { apiGet as workerApiGet, unwrapUnitTaskValue, taskResultDone } from "./pioreactorApi";
+import { apiGet as workerApiGet } from "./pioreactorApi";
 import {
   AreaChart,
   Area,
@@ -238,16 +238,21 @@ const overviewCardDotStatus = (r, tel, chartLiveMode) => {
   return "online";
 };
 
+/** Normalize GET /api/workers/{unit}/jobs/running (unit_api job metadata rows). */
+const parseRunningJobs = (jobs, experimentName) => {
+  if (!Array.isArray(jobs)) return [];
+  return jobs.filter(
+    (j) =>
+      j?.is_running &&
+      j?.job_name &&
+      (!experimentName || !j.experiment || j.experiment === experimentName),
+  );
+};
+
 /**
  * Determine which units are physically powered/connected RIGHT NOW.
- *
- * /api/workers only lists the cluster *inventory* (is_active is a config flag,
- * not live reachability). The reliable live signal is the long-running `monitor`
- * job: every powered Pioreactor runs it. We ask the leader for each unit's
- * running jobs (an async task) and poll the result. A connected unit returns
- * "complete" with monitor running; an unplugged unit's task stays "pending".
- *
- * Returns a Set of connected unit ids. The leader is always considered connected.
+ * Uses GET /api/workers/{unit}/jobs/running — monitor must be running.
+ * Leader is always considered connected (we just reached it).
  */
 const probeConnectivity = async (unitIds, leaderId) => {
   const connected = new Set();
@@ -255,28 +260,33 @@ const probeConnectivity = async (unitIds, leaderId) => {
   await Promise.all(
     unitIds.map(async (unitId) => {
       if (unitId === leaderId) return;
-      const dispatch = await api(
+      const jobs = await workerApiGet(
         `/api/workers/${encodeURIComponent(unitId)}/jobs/running`,
+        { unitId },
       );
-      const path = dispatch?.result_url_path;
-      if (!path) return; // could not dispatch → treat as disconnected
-      // Poll the task result briefly (~2.4s max). Powered units answer fast.
-      for (let i = 0; i < 6; i++) {
-        await new Promise((r) => setTimeout(r, 400));
-        const res = await api(path);
-        if (taskResultDone(res?.status)) {
-          const jobs = unwrapUnitTaskValue(res, unitId) || [];
-          const monitorUp = Array.isArray(jobs)
-            ? jobs.some((j) => j.job_name === "monitor" && j.is_running)
-            : false;
-          if (monitorUp) connected.add(unitId);
-          return;
-        }
+      if (parseRunningJobs(jobs).some((j) => j.job_name === "monitor")) {
+        connected.add(unitId);
       }
-      // Timed out → unit is not responding → leave out of connected set.
     }),
   );
   return connected;
+};
+
+/** Running job flags for the selected experiment from Pioreactor job metadata. */
+const fetchRunningJobsForUnits = async (unitIds, experimentName) => {
+  const flags = {};
+  await Promise.all(
+    unitIds.map(async (unitId) => {
+      const jobs = await workerApiGet(
+        `/api/workers/${encodeURIComponent(unitId)}/jobs/running`,
+        { unitId },
+      );
+      for (const j of parseRunningJobs(jobs, experimentName)) {
+        flags[j.job_name] = true;
+      }
+    }),
+  );
+  return flags;
 };
 
 const PUMP_CALIB_DEVICE = {
@@ -340,6 +350,8 @@ const usePioreactorData = () => {
   });
   const [logs, setLogs] = useState([]);
   const [fetchError, setFetchError] = useState(null);
+  /** From GET /api/workers/{unit}/jobs/running per powered unit. */
+  const [runningJobsFromApi, setRunningJobsFromApi] = useState({});
   const [lastFetch, setLastFetch] = useState(null);
   const [timeRange, setTimeRange] = useState({ start: "", end: "" });
   const timeRangeRef = useRef(timeRange);
@@ -533,6 +545,18 @@ const usePioreactorData = () => {
       }
     });
     setActiveCalibrations(calsByUnit);
+
+    // 4b. Running jobs for this experiment (official job metadata, not inferred)
+    const poweredForJobs = withOverrides
+      .map((r, i) => {
+        const isConnected =
+          connectedSet.has(r.id) || (i > 0 && workerHasData(i));
+        return isConnected && r.status !== "offline" ? r.id : null;
+      })
+      .filter(Boolean);
+    setRunningJobsFromApi(
+      await fetchRunningJobsForUnits(poweredForJobs, activeExp.experiment),
+    );
 
     // 5. Fetch logs
     const logsRaw = await api(`/api/experiments/${expName}/logs`);
@@ -933,6 +957,7 @@ const usePioreactorData = () => {
     refresh: fetchAll,
     fetchError,
     activeCalibrations,
+    runningJobsFromApi,
   };
 };
 
@@ -2533,6 +2558,7 @@ export default function App() {
     refresh,
     activeCalibrations,
     fetchError,
+    runningJobsFromApi,
   } = usePioreactorData();
 
   // Culture labels: stored per experiment in localStorage
@@ -2943,41 +2969,21 @@ export default function App() {
     localStorage.setItem("pio_targetRpm", targetRpm);
   }, [targetRpm]);
   const [runningJobs, setRunningJobs] = useState({});
-  const manualJobOverride = useRef({}); // tracks recent button clicks
+  const manualJobOverride = useRef({}); // brief optimistic UI after start/stop clicks
   const anyJobRunning = Object.values(runningJobs).some(Boolean);
 
-  // Detect running jobs from telemetry freshness
+  // Sync RUNNING badges from Pioreactor job metadata; keep 15s optimistic override after clicks.
   useEffect(() => {
-    if (!connected) return;
-    const FRESH_MS = 120_000; // 2 minutes
     const now = Date.now();
-    const hasFreshData = (series) => {
-      if (!series?.latestByKey) return false;
-      return Object.values(series.latestByKey).some(
-        (v) => v?.ts && now - v.ts < FRESH_MS,
-      );
-    };
-    // Only auto-detect if user hasn't clicked a button in the last 15s
     const override = manualJobOverride.current;
-    const use = (job, detected) => {
-      if (override[job] && now - override[job] < 15000) return; // skip, user just clicked
-      return detected;
-    };
-    const odRunning = hasFreshData(odData);
-    const tempRunning = hasFreshData(tempData);
-    const grRunning = hasFreshData(growthData);
-    setRunningJobs((prev) => ({
-      ...prev,
-      od_reading: use("od_reading", odRunning) ?? prev.od_reading,
-      temperature_automation:
-        use("temperature_automation", tempRunning) ??
-        prev.temperature_automation,
-      growth_rate_calculating:
-        use("growth_rate_calculating", grRunning) ??
-        prev.growth_rate_calculating,
-      stirring: use("stirring", odRunning) ?? prev.stirring,
-    }));
-  }, [connected, odData, tempData, growthData]);
+    setRunningJobs((prev) => {
+      const next = { ...runningJobsFromApi };
+      for (const [job, ts] of Object.entries(override)) {
+        if (now - ts < 15000 && prev[job] !== undefined) next[job] = prev[job];
+      }
+      return next;
+    });
+  }, [runningJobsFromApi]);
 
   const handleStopJob = async (jobName) => {
     setStopping((prev) => ({ ...prev, [jobName]: true }));
