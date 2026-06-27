@@ -3506,7 +3506,8 @@ export default function App() {
   // state instead of a blank plot. The dedicated OD/Temp/Growth pages keep using
   // the unscoped odP/tempP/grP (all reactors).
   const scopeToSelected = (p, keys) => {
-    if (!selectedKey) return p;
+    // Overview is one tank at a time — never dump all experiment series here.
+    if (!selectedKey) return { ...p, keys: [], data: [] };
     const sel = keys.filter((k) => k.key === selectedKey);
     return sel.length ? { ...p, keys: sel } : { ...p, keys: [], data: [] };
   };
