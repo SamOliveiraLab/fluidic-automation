@@ -59,7 +59,14 @@ const CalChart = ({ cal, th }) => {
   const { points, fit } = useMemo(() => calibrationChartData(cal), [cal]);
   if (!points.length) {
     return (
-      <div style={{ padding: 24, textAlign: "center", color: th.textMuted, fontSize: 16 }}>
+      <div
+        style={{
+          padding: 24,
+          textAlign: "center",
+          color: th.textMuted,
+          fontSize: 16,
+        }}
+      >
         No recorded data for this curve.
       </div>
     );
@@ -209,7 +216,11 @@ export default function CalibrationsPage({
     );
     setBusy(false);
     if (res.ok) {
-      showFeedback("Calibration activated", `${deviceLabel(device)}: ${name}`, "success");
+      showFeedback(
+        "Calibration activated",
+        `${deviceLabel(device)}: ${name}`,
+        "success",
+      );
       load();
       if (selectedName === name) openDetail(name);
     } else {
@@ -226,7 +237,11 @@ export default function CalibrationsPage({
     );
     setBusy(false);
     if (res.ok) {
-      showFeedback("Calibration cleared", `${deviceLabel(device)} is no longer active.`, "success");
+      showFeedback(
+        "Calibration cleared",
+        `${deviceLabel(device)} is no longer active.`,
+        "success",
+      );
       load();
     } else {
       showFeedback("Could not clear", `HTTP ${res.status}`, "error");
@@ -288,9 +303,7 @@ export default function CalibrationsPage({
         ? [result.calibration]
         : [];
     const hit = links.find(
-      (c) =>
-        c.calibration_name &&
-        (c.device === device || !c.device),
+      (c) => c.calibration_name && (c.device === device || !c.device),
     );
     if (hit?.calibration_name) {
       setBusy(true);
@@ -309,7 +322,11 @@ export default function CalibrationsPage({
         onCalibrationsChanged?.();
       }
     } else if (links.length) {
-      showFeedback("Calibration saved", "Set it active from the list if needed.", "success");
+      showFeedback(
+        "Calibration saved",
+        "Set it active from the list if needed.",
+        "success",
+      );
     }
   };
 
@@ -353,7 +370,14 @@ export default function CalibrationsPage({
             Run calibrations here, then set active or copy between reactors.
           </p>
         </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            alignItems: "center",
+            flexWrap: "wrap",
+          }}
+        >
           <select
             value={unitId}
             onChange={(e) => {
@@ -378,11 +402,17 @@ export default function CalibrationsPage({
               </option>
             ))}
           </select>
-          <button onClick={load} disabled={loading || !connected} style={btn(false)}>
+          <button
+            onClick={load}
+            disabled={loading || !connected}
+            style={btn(false)}
+          >
             {loading ? "Loading…" : "↻ Refresh"}
           </button>
           {!connected && (
-            <span style={{ fontSize: 15, color: th.danger }}>Pioreactor offline</span>
+            <span style={{ fontSize: 15, color: th.danger }}>
+              Pioreactor offline
+            </span>
           )}
         </div>
       </div>
@@ -411,7 +441,9 @@ export default function CalibrationsPage({
       </div>
 
       {/* Device picker */}
-      <div style={{ display: "flex", gap: 6, marginBottom: 20, flexWrap: "wrap" }}>
+      <div
+        style={{ display: "flex", gap: 6, marginBottom: 20, flexWrap: "wrap" }}
+      >
         {deviceList.map((d) => (
           <button
             key={d.id}
@@ -508,7 +540,9 @@ export default function CalibrationsPage({
                     fontFamily: "inherit",
                   }}
                 >
-                  <div style={{ fontWeight: 600, fontSize: 15, color: th.text }}>
+                  <div
+                    style={{ fontWeight: 600, fontSize: 15, color: th.text }}
+                  >
                     {name}
                     {isActive && (
                       <span
@@ -524,7 +558,9 @@ export default function CalibrationsPage({
                       </span>
                     )}
                   </div>
-                  <div style={{ fontSize: 13, color: th.textMuted, marginTop: 2 }}>
+                  <div
+                    style={{ fontSize: 13, color: th.textMuted, marginTop: 2 }}
+                  >
                     {c.created_at
                       ? new Date(c.created_at).toLocaleDateString()
                       : ""}
@@ -573,7 +609,9 @@ export default function CalibrationsPage({
                 }}
               >
                 <div>
-                  <div style={{ fontSize: 19, fontWeight: 700, color: th.text }}>
+                  <div
+                    style={{ fontSize: 19, fontWeight: 700, color: th.text }}
+                  >
                     {selectedDetail.calibration_name}
                     {(activeName === selectedDetail.calibration_name ||
                       selectedDetail.is_active) && (
@@ -590,14 +628,20 @@ export default function CalibrationsPage({
                       </span>
                     )}
                   </div>
-                  <div style={{ fontSize: 15, color: th.textMuted, marginTop: 2 }}>
+                  <div
+                    style={{ fontSize: 15, color: th.textMuted, marginTop: 2 }}
+                  >
                     {unitLabel(unitId)} / {deviceLabel(device)}
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                   {activeName === selectedDetail.calibration_name ||
                   selectedDetail.is_active ? (
-                    <button style={btn(false)} disabled={busy} onClick={clearActive}>
+                    <button
+                      style={btn(false)}
+                      disabled={busy}
+                      onClick={clearActive}
+                    >
                       Set inactive
                     </button>
                   ) : (
@@ -623,7 +667,9 @@ export default function CalibrationsPage({
               >
                 {selectedDetail.created_at && (
                   <div>
-                    <div style={{ color: th.textMuted, marginBottom: 2 }}>Created</div>
+                    <div style={{ color: th.textMuted, marginBottom: 2 }}>
+                      Created
+                    </div>
                     <div style={{ color: th.textSecondary, fontWeight: 600 }}>
                       {new Date(selectedDetail.created_at).toLocaleString()}
                     </div>
@@ -631,20 +677,26 @@ export default function CalibrationsPage({
                 )}
                 {selectedDetail.calibration_type && (
                   <div>
-                    <div style={{ color: th.textMuted, marginBottom: 2 }}>Type</div>
+                    <div style={{ color: th.textMuted, marginBottom: 2 }}>
+                      Type
+                    </div>
                     <div style={{ color: th.textSecondary, fontWeight: 600 }}>
                       {selectedDetail.calibration_type}
                     </div>
                   </div>
                 )}
                 <div>
-                  <div style={{ color: th.textMuted, marginBottom: 2 }}>Axes</div>
+                  <div style={{ color: th.textMuted, marginBottom: 2 }}>
+                    Axes
+                  </div>
                   <div style={{ color: th.textSecondary, fontWeight: 600 }}>
                     {selectedDetail.x || "x"} / {selectedDetail.y || "y"}
                   </div>
                 </div>
                 <div style={{ gridColumn: "1 / -1" }}>
-                  <div style={{ color: th.textMuted, marginBottom: 2 }}>Fit curve</div>
+                  <div style={{ color: th.textMuted, marginBottom: 2 }}>
+                    Fit curve
+                  </div>
                   <div
                     style={{
                       color: th.textSecondary,
@@ -792,8 +844,8 @@ export default function CalibrationsPage({
                       lineHeight: 1.6,
                     }}
                   >
-                    Uploads this YAML to the target Pi and sets it active. Best when
-                    hardware matches.
+                    Uploads this YAML to the target Pi and sets it active. Best
+                    when hardware matches.
                   </p>
                 </div>
               )}

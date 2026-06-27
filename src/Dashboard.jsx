@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import CalibrationsPage from "./CalibrationsPage";
+import { mergeExperimentDatasets, downloadCsv } from "./experimentData";
 import { apiGet as workerApiGet } from "./pioreactorApi";
 import {
   AreaChart,
@@ -70,7 +71,7 @@ const api = async (path) => {
 // Transform Pioreactor time_series response → chart-friendly format
 // API returns: { series: ["unit1-ch","unit2-ch"], data: [[{x,y},...],[{x,y},...]] }
 // We need:    [{ t:"HH:MM", r01: value, r02: value }, ...]
-const transformTimeSeries = (raw, workers) => {
+const transformTimeSeries = (raw, workers, { maxPoints = 300 } = {}) => {
   if (!raw?.series?.length || !raw?.data?.length)
     return { data: [], keys: [], latestByKey: {} };
 
@@ -135,8 +136,8 @@ const transformTimeSeries = (raw, workers) => {
       }
     }
   }
-  if (data.length > 300) {
-    const step = Math.ceil(data.length / 300);
+  if (maxPoints > 0 && data.length > maxPoints) {
+    const step = Math.ceil(data.length / maxPoints);
     data = data.filter((_, i) => i % step === 0);
   }
 
@@ -348,6 +349,8 @@ const usePioreactorData = () => {
     keys: [],
     latestByKey: {},
   });
+  /** Full-resolution merged OD/temp/growth rows for the selected experiment (export table). */
+  const [experimentTable, setExperimentTable] = useState({ rows: [], columns: [] });
   const [logs, setLogs] = useState([]);
   const [fetchError, setFetchError] = useState(null);
   /** From GET /api/workers/{unit}/jobs/running per powered unit. */
@@ -466,6 +469,13 @@ const usePioreactorData = () => {
     setOdData(transformTimeSeries(odRaw, workers));
     setTempData(transformTimeSeries(tempRaw, workers));
     setGrowthData(transformTimeSeries(growthRaw, workers));
+    setExperimentTable(
+      mergeExperimentDatasets(
+        transformTimeSeries(odRaw, workers, { maxPoints: 0 }),
+        transformTimeSeries(tempRaw, workers, { maxPoints: 0 }),
+        transformTimeSeries(growthRaw, workers, { maxPoints: 0 }),
+      ),
+    );
 
     // 3b. Determine which units are physically connected right now.
     const leaderId = workers[0]?.id;
@@ -939,6 +949,7 @@ const usePioreactorData = () => {
     odData,
     tempData,
     growthData,
+    experimentTable,
     logs,
     timeRange,
     setTimeRange,
@@ -2540,6 +2551,7 @@ export default function App() {
     odData,
     tempData,
     growthData,
+    experimentTable,
     addReactor,
     removeReactor,
     toggleStatus,
@@ -2653,6 +2665,8 @@ export default function App() {
     (r) => r.status !== "disconnected",
   ).length;
   const disconnectedCount = reactors.length - poweredCount;
+  /** All units registered on the leader (GET /api/workers), including offline workers. */
+  const clusterRegisteredCount = reactors.length;
   // Disconnected units (registered in the cluster but powered off / unreachable)
   // are hidden from the entire UI — if it's not connected, it's not shown.
   const connectedReactors = reactors.filter((r) => r.status !== "disconnected");
@@ -3085,6 +3099,7 @@ export default function App() {
     { id: "od", icon: "◎", label: "OD Readings" },
     { id: "temp", icon: "◈", label: "Temperature" },
     { id: "growth", icon: "↗", label: "Growth Rate" },
+    { id: "data", icon: "▤", label: "Experiment Data" },
     { id: "pumps", icon: "⬡", label: "Pump Control" },
     { id: "calibrations", icon: "⊕", label: "Calibrations" },
     { id: "logs", icon: "☰", label: "Logs" },
@@ -3497,13 +3512,20 @@ export default function App() {
             >
               {connected
                 ? chartLiveMode
-                  ? `${poweredCount}/${reactors.length} powered · ${online} assigned`
-                  : `${online} assigned · ${reactors.length} in cluster`
+                  ? `${poweredCount} powered · ${online} assigned`
+                  : `${online} assigned to experiment`
                 : "Offline — API unreachable"}
             </span>
           </div>
-          <div style={{ fontSize: 14, color: th.textMuted, marginTop: 4 }}>
-            <b>{lastFetch && ` ${lastFetch.toLocaleTimeString()}`}</b>
+          <div style={{ fontSize: 13, color: th.textMuted, marginTop: 4 }}>
+            {connected && clusterRegisteredCount > 0 && (
+              <span title="Total from GET /api/workers (cluster inventory — includes powered-off units)">
+                {clusterRegisteredCount} registered in cluster
+                {disconnectedCount > 0 ? ` · ${disconnectedCount} offline` : ""}
+                {" · "}
+              </span>
+            )}
+            {lastFetch && <b>{lastFetch.toLocaleTimeString()}</b>}
           </div>
         </div>
         <nav style={{ flex: 1, padding: "0 10px" }}>
@@ -3859,10 +3881,10 @@ export default function App() {
             {fetchError.includes("experiment_tags") && (
               <span>
                 {" "}
-                This usually happens after a Pioreactor update. On the leader Pi run:{" "}
-                <code style={{ fontSize: 13 }}>pio db</code> then create the{" "}
-                <code style={{ fontSize: 13 }}>experiment_tags</code> table (see docs
-                or chat).
+                This usually happens after a Pioreactor update. On the leader Pi
+                run: <code style={{ fontSize: 13 }}>pio db</code> then create
+                the <code style={{ fontSize: 13 }}>experiment_tags</code> table
+                (see docs or chat).
               </span>
             )}
           </div>
@@ -4416,16 +4438,18 @@ export default function App() {
               <div>
                 <p style={{ margin: 0, fontSize: 17, color: th.textSecondary }}>
                   {poweredCount} powered · {online} assigned to "
-                  {experiment?.experiment || "—"}" ·{" "}
+                  {experiment?.experiment || "—"}" · {clusterRegisteredCount}{" "}
+                  registered in cluster
                   {unassignedCount > 0
-                    ? `${unassignedCount} powered but unassigned · `
+                    ? ` · ${unassignedCount} unassigned`
                     : ""}
                   {disconnectedCount > 0
-                    ? `${disconnectedCount} offline/unreachable · `
+                    ? ` · ${disconnectedCount} offline`
                     : ""}
-                  {connectedReactors.filter((r) => r.status === "offline")
-                    .length}{" "}
-                  excluded
+                  {connectedReactors.filter((r) => r.status === "offline").length >
+                  0
+                    ? ` · ${connectedReactors.filter((r) => r.status === "offline").length} excluded`
+                    : ""}
                 </p>
               </div>
               <button
@@ -4857,6 +4881,217 @@ export default function App() {
               refresh={refresh}
             />
             <Chart th={th} {...grP} />
+          </div>
+        )}
+
+        {page === "data" && (
+          <div style={{ padding: "24px" }}>
+            <TimeRangeBar
+              th={th}
+              timeRange={timeRange}
+              setTimeRange={setTimeRange}
+              refresh={refresh}
+            />
+            <div
+              style={{
+                background: th.surface,
+                border: `1px solid ${th.border}`,
+                borderRadius: 16,
+                boxShadow: th.shadow,
+                overflow: "hidden",
+              }}
+            >
+              <div
+                style={{
+                  padding: "18px 22px",
+                  borderBottom: `1px solid ${th.borderLight}`,
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "flex-start",
+                  flexWrap: "wrap",
+                  gap: 12,
+                }}
+              >
+                <div>
+                  <h2
+                    style={{
+                      margin: 0,
+                      fontSize: 20,
+                      fontWeight: 700,
+                      color: th.text,
+                    }}
+                  >
+                    Experiment data
+                  </h2>
+                  <p
+                    style={{
+                      margin: "6px 0 0",
+                      fontSize: 15,
+                      color: th.textMuted,
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    {experiment
+                      ? `"${experiment.experiment}" — merged OD, temperature, and growth rate from Pioreactor time series APIs.`
+                      : "Select an experiment to view data."}
+                    {experimentTable.rows.length > 0 && (
+                      <>
+                        {" "}
+                        {experimentTable.rows.length.toLocaleString()} rows
+                        {assignedUnits.length > 0 &&
+                          ` · assigned: ${assignedUnits.join(", ")}`}
+                      </>
+                    )}
+                  </p>
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button
+                    onClick={() => {
+                      if (!experimentTable.rows.length) return;
+                      const slug = (experiment?.experiment || "experiment")
+                        .replace(/[^\w.-]+/g, "_")
+                        .slice(0, 60);
+                      downloadCsv(
+                        experimentTable.rows,
+                        experimentTable.columns,
+                        `${slug}_all_readings`,
+                      );
+                    }}
+                    disabled={!experimentTable.rows.length}
+                    style={{
+                      padding: "8px 16px",
+                      borderRadius: 8,
+                      border: "none",
+                      background: experimentTable.rows.length
+                        ? th.accent
+                        : th.bgAlt,
+                      color: experimentTable.rows.length ? "#fff" : th.textMuted,
+                      fontSize: 14,
+                      fontWeight: 700,
+                      cursor: experimentTable.rows.length
+                        ? "pointer"
+                        : "not-allowed",
+                      fontFamily: "inherit",
+                    }}
+                  >
+                    ↓ Export CSV (all)
+                  </button>
+                  <button
+                    onClick={refresh}
+                    style={{
+                      padding: "8px 14px",
+                      borderRadius: 8,
+                      background: th.bgAlt,
+                      border: `1px solid ${th.border}`,
+                      cursor: "pointer",
+                      fontSize: 14,
+                      fontWeight: 600,
+                      color: th.textSecondary,
+                      fontFamily: "inherit",
+                    }}
+                  >
+                    ↻ Refresh
+                  </button>
+                </div>
+              </div>
+
+              {!experiment ? (
+                <div
+                  style={{
+                    padding: 48,
+                    textAlign: "center",
+                    color: th.textMuted,
+                    fontSize: 16,
+                  }}
+                >
+                  Pick an experiment from the Overview bar or sidebar.
+                </div>
+              ) : experimentTable.rows.length === 0 ? (
+                <div
+                  style={{
+                    padding: 48,
+                    textAlign: "center",
+                    color: th.textMuted,
+                    fontSize: 16,
+                  }}
+                >
+                  No time series data for this experiment yet. Start OD, temperature,
+                  or growth jobs on assigned bioreactors.
+                </div>
+              ) : (
+                <>
+                  <div
+                    style={{
+                      padding: "10px 22px",
+                      fontSize: 13,
+                      color: th.textMuted,
+                      borderBottom: `1px solid ${th.borderLight}`,
+                    }}
+                  >
+                    Preview (first 500 rows). Export CSV downloads the full dataset
+                    ({experimentTable.rows.length.toLocaleString()} rows).
+                  </div>
+                  <div style={{ maxHeight: "65vh", overflow: "auto" }}>
+                    <table
+                      style={{
+                        width: "100%",
+                        borderCollapse: "collapse",
+                        fontSize: 13,
+                        fontFamily: "'JetBrains Mono',monospace",
+                      }}
+                    >
+                      <thead>
+                        <tr>
+                          {experimentTable.columns.map((col) => (
+                            <th
+                              key={col.key}
+                              style={{
+                                position: "sticky",
+                                top: 0,
+                                background: th.bgAlt,
+                                padding: "10px 12px",
+                                textAlign: "left",
+                                borderBottom: `1px solid ${th.border}`,
+                                fontWeight: 700,
+                                color: th.textSecondary,
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {col.label}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {experimentTable.rows.slice(0, 500).map((row, i) => (
+                          <tr
+                            key={row._ts ?? i}
+                            style={{
+                              background:
+                                i % 2 === 0 ? th.surface : th.bgAlt + "80",
+                            }}
+                          >
+                            {experimentTable.columns.map((col) => (
+                              <td
+                                key={col.key}
+                                style={{
+                                  padding: "8px 12px",
+                                  borderBottom: `1px solid ${th.borderLight}`,
+                                  color: th.text,
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                {row[col.key] ?? ""}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         )}
 
