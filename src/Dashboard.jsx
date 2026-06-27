@@ -1501,8 +1501,6 @@ const Chart = ({
   emptyIcon,
   emptyTitle,
   emptySub,
-  emptyAction,
-  onEmptyAction,
   onStopAction,
   stopLabel,
   onStartAction,
@@ -1861,27 +1859,6 @@ const Chart = ({
             >
               {emptySub}
             </div>
-            {emptyAction && (
-              <button
-                onClick={onEmptyAction}
-                style={{
-                  marginTop: 14,
-                  display: "inline-block",
-                  fontSize: 15,
-                  fontWeight: 700,
-                  color: onEmptyAction ? "#fff" : th.accent,
-                  background: onEmptyAction ? th.accent : th.accentLight,
-                  padding: onEmptyAction ? "10px 20px" : "6px 14px",
-                  borderRadius: onEmptyAction ? 10 : 7,
-                  border: "none",
-                  cursor: onEmptyAction ? "pointer" : "default",
-                  fontFamily: "inherit",
-                  transition: "opacity 0.2s",
-                }}
-              >
-                {emptyAction}
-              </button>
-            )}
           </div>
         )}
       </div>
@@ -2885,17 +2862,15 @@ export default function App() {
   // The Overview shows one reactor's readings at a time; this is the selected one.
   const [selectedReactorId, setSelectedReactorId] = useState(null);
 
-  // Auto-select a reactor on load (and keep the selection valid). Prefer an
-  // online unit, then any connected unit.
+  // Auto-select an assigned reactor for Overview charts. Do not default to an
+  // unassigned unit (e.g. leader with live monitor but not in this experiment).
   useEffect(() => {
+    const assignedOnline = connectedReactors.filter((r) => r.status === "online");
     const stillValid =
       selectedReactorId &&
-      connectedReactors.some((r) => r.id === selectedReactorId);
+      assignedOnline.some((r) => r.id === selectedReactorId);
     if (stillValid) return;
-    const preferred =
-      connectedReactors.find((r) => r.status === "online") ||
-      connectedReactors[0];
-    setSelectedReactorId(preferred ? preferred.id : null);
+    setSelectedReactorId(assignedOnline[0]?.id ?? null);
     // connectedReactors is derived from reactors each render; key off ids only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reactors]);
@@ -3376,22 +3351,7 @@ export default function App() {
     interpText: I_OD,
     emptyIcon: "◎",
     emptyTitle: "No OD data yet",
-    emptySub: connected
-      ? "Start OD Reading on your Pioreactors."
-      : "Cannot reach Pioreactor API. Are you on the lab network?",
-    emptyAction: connected
-      ? starting.od_reading
-        ? "Starting..."
-        : "Start OD Reading →"
-      : "Check Connection",
-    onEmptyAction: connected ? () => handleStartJob("od_reading") : undefined,
-    onStopAction:
-      connected && odData.data.length > 0
-        ? () => handleStopJob("od_reading")
-        : undefined,
-    stopLabel: stopping.od_reading ? "Stopping..." : "■ Stop OD",
-    onStartAction: connected ? () => handleStartJob("od_reading") : undefined,
-    startLabel: starting.od_reading ? "Starting..." : "▶ Start OD",
+    emptySub: "Waiting for data…",
     isRunning: !!runningJobs.od_reading,
   };
   const tempP = {
@@ -3416,36 +3376,7 @@ export default function App() {
     interpText: I_TEMP,
     emptyIcon: "🌡️",
     emptyTitle: "No temperature data",
-    emptySub: connected
-      ? "Start Temperature Automation (Thermostat, e.g. 30°C). Works with water."
-      : "Cannot reach Pioreactor API.",
-    emptyAction: connected
-      ? starting.temperature_automation
-        ? "Starting..."
-        : `Start Thermostat at ${targetTemp}°C →`
-      : "Check Connection",
-    onEmptyAction: connected
-      ? () =>
-          handleStartJob("temperature_automation", {
-            automation_name: "thermostat",
-            target_temperature: parseFloat(targetTemp),
-          })
-      : undefined,
-    onStopAction:
-      connected && tempData.data.length > 0
-        ? () => handleStopJob("temperature_automation")
-        : undefined,
-    stopLabel: stopping.temperature_automation ? "Stopping..." : "■ Stop Temp",
-    onStartAction: connected
-      ? () =>
-          handleStartJob("temperature_automation", {
-            automation_name: "thermostat",
-            target_temperature: parseFloat(targetTemp),
-          })
-      : undefined,
-    startLabel: starting.temperature_automation
-      ? "Starting..."
-      : `▶ Start ${targetTemp}°C`,
+    emptySub: "Waiting for data…",
     isRunning: !!runningJobs.temperature_automation,
     headerExtra: (
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -3539,26 +3470,7 @@ export default function App() {
     interpText: I_GR,
     emptyIcon: "📈",
     emptyTitle: "No growth rate data",
-    emptySub: connected
-      ? "Requires Growth Rate activity AND organisms growing."
-      : "Cannot reach Pioreactor API.",
-    emptyAction: connected
-      ? starting.growth_rate_calculating
-        ? "Starting..."
-        : "Start Growth Rate →"
-      : "Check Connection",
-    onEmptyAction: connected
-      ? () => handleStartJob("growth_rate_calculating")
-      : undefined,
-    onStopAction:
-      connected && growthData.data.length > 0
-        ? () => handleStopJob("growth_rate_calculating")
-        : undefined,
-    stopLabel: stopping.growth_rate_calculating ? "Stopping..." : "■ Stop GR",
-    onStartAction: connected
-      ? () => handleStartJob("growth_rate_calculating")
-      : undefined,
-    startLabel: starting.growth_rate_calculating ? "Starting..." : "▶ Start GR",
+    emptySub: "Waiting for data…",
     isRunning: !!runningJobs.growth_rate_calculating,
   };
 
@@ -4367,8 +4279,14 @@ export default function App() {
               {connectedReactors.map((r) => (
                 <div
                   key={r.id}
-                  onClick={() => setSelectedReactorId(r.id)}
-                  title="Click to show this bioreactor's readings below"
+                  onClick={() => {
+                    if (r.status === "online") setSelectedReactorId(r.id);
+                  }}
+                  title={
+                    r.status === "online"
+                      ? "Click to show this bioreactor's readings below"
+                      : "Assign this bioreactor to include it in the experiment"
+                  }
                   style={{
                     // Grow to fill the row when few; keep a min width and don't
                     // shrink so the row scrolls horizontally once there are many.
@@ -4668,7 +4586,7 @@ export default function App() {
               ))}
             </div>
 
-            {selectedReactor && (
+            {selectedReactor && selectedReactor.status === "online" && (
               <div
                 style={{
                   display: "inline-flex",
@@ -4686,12 +4604,20 @@ export default function App() {
                   th={th}
                 />
                 <span
-                  style={{ fontSize: 14, fontWeight: 600, color: th.textMuted }}
+                  style={{
+                    fontSize: 14,
+                    fontWeight: 600,
+                    color: th.textMuted,
+                  }}
                 >
                   Showing readings for
                 </span>
                 <span
-                  style={{ fontSize: 16, fontWeight: 800, color: th.accent }}
+                  style={{
+                    fontSize: 16,
+                    fontWeight: 800,
+                    color: th.accent,
+                  }}
                 >
                   {selectedLabel}
                 </span>
