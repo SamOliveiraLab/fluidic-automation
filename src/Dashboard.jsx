@@ -234,9 +234,22 @@ const buildPerReactorTelemetry = (
 const overviewCardDotStatus = (r, tel, chartLiveMode) => {
   if (r.status === "offline") return "offline";
   if (r.status === "disconnected") return "disconnected";
+  if (r.status === "assigned_elsewhere") return "assigned_elsewhere";
   if (r.status === "unassigned") return "unassigned";
   if (r.status === "warning") return "warning";
   return "online";
+};
+
+/** GET /api/workers/assignments → { unitId: experimentName | null } */
+const parseWorkerAssignments = (raw) => {
+  const map = {};
+  if (!Array.isArray(raw)) return map;
+  for (const row of raw) {
+    const id = row?.pioreactor_unit || row?.unit;
+    if (!id) continue;
+    map[id] = row.experiment || null;
+  }
+  return map;
 };
 
 /** Normalize GET /api/workers/{unit}/jobs/running (unit_api job metadata rows). */
@@ -334,6 +347,12 @@ const usePioreactorData = () => {
   // Pioreactor units assigned to the currently selected experiment.
   // A unit can be in the cluster (/api/workers) yet NOT assigned here.
   const [assignedUnits, setAssignedUnits] = useState([]);
+  /** Global experiment per unit from GET /api/workers/assignments */
+  const [workerAssignments, setWorkerAssignments] = useState({});
+  const workerAssignmentsRef = useRef({});
+  useEffect(() => {
+    workerAssignmentsRef.current = workerAssignments;
+  }, [workerAssignments]);
   const [odData, setOdData] = useState({
     data: [],
     keys: [],
@@ -436,9 +455,14 @@ const usePioreactorData = () => {
     setExperiment(activeExp);
     const expName = encodeURIComponent(activeExp.experiment);
 
-    // 2b. Which units are actually assigned to this experiment?
-    // Newer Pioreactor: GET /api/experiments/{exp}/workers → [{pioreactor_unit,...}]
-    const assignedRaw = await api(`/api/experiments/${expName}/workers`);
+    // 2b. Experiment assignments (global + for selected experiment)
+    const [assignedRaw, assignmentsRaw] = await Promise.all([
+      api(`/api/experiments/${expName}/workers`),
+      api("/api/workers/assignments"),
+    ]);
+    const workerAssignmentMap = parseWorkerAssignments(assignmentsRaw);
+    setWorkerAssignments(workerAssignmentMap);
+    workerAssignmentsRef.current = workerAssignmentMap;
     const assignedSet = Array.isArray(assignedRaw)
       ? new Set(
           assignedRaw
@@ -506,30 +530,33 @@ const usePioreactorData = () => {
     // Status meaning:
     //   offline      = is_active=0 in cluster, or manually excluded (override)
     //   disconnected = registered in cluster but not powered/reachable right now
-    //   unassigned   = connected & active but NOT assigned to this experiment
-    //   online       = connected, active, AND assigned (or producing data)
+    //   unassigned         = powered, not assigned to any experiment
+    //   assigned_elsewhere = powered, assigned to a different experiment
+    //   online             = powered and assigned to the selected experiment
+    const currentExpName = activeExp.experiment;
     setReactors(
       withOverrides.map((r, i) => {
-        // If a unit is publishing time series for this experiment, it is reachable
-        // even when the monitor-job probe times out (common right after upgrades).
         const isConnected =
           connectedSet.has(r.id) || (i > 0 && workerHasData(i));
-        if (r.status === "offline") return { ...r, connected: isConnected }; // manually excluded / is_active=0
-        if (!isConnected)
-          return { ...r, status: "disconnected", connected: false };
-        // When the assignment endpoint is available, trust it as source of truth.
-        if (assignedSet) {
-          if (assignedSet.has(r.id))
-            return { ...r, status: "online", connected: true };
-          // Leader can self-report even while unassigned; treat data as proof.
-          if (i === 0 && workerHasData(i))
-            return { ...r, status: "online", connected: true };
-          return { ...r, status: "unassigned", connected: true };
+        const globalExp = workerAssignmentMap[r.id] || null;
+        const base = { ...r, assignedExperiment: globalExp, connected: isConnected };
+
+        if (r.status === "offline") return base;
+        if (!isConnected) return { ...base, status: "disconnected", connected: false };
+
+        if (globalExp && globalExp !== currentExpName) {
+          return { ...base, status: "assigned_elsewhere", connected: true };
+        }
+        if (assignedSet?.has(r.id) || globalExp === currentExpName) {
+          return { ...base, status: "online", connected: true };
+        }
+        if (Object.keys(workerAssignmentMap).length > 0 || assignedSet) {
+          return { ...base, status: "unassigned", connected: true };
         }
         // Older firmware fallback: infer from time-series presence.
-        if (i === 0) return { ...r, status: "online", connected: true };
+        if (i === 0) return { ...base, status: "online", connected: true };
         return {
-          ...r,
+          ...base,
           status: workerHasData(i) ? "online" : "unassigned",
           connected: true,
         };
@@ -687,6 +714,13 @@ const usePioreactorData = () => {
   // UI-facing: assign a unit to the active experiment, then refresh.
   const assignReactor = async (unitId) => {
     if (!experiment) return { success: false, error: "No active experiment" };
+    const otherExp = workerAssignmentsRef.current[unitId];
+    if (otherExp && otherExp !== experiment.experiment) {
+      return {
+        success: false,
+        error: `${unitId} is already on experiment "${otherExp}". Open that experiment and unassign it first.`,
+      };
+    }
     const success = await assignWorker(unitId, experiment.experiment);
     setTimeout(fetchAll, 400);
     return success
@@ -901,8 +935,11 @@ const usePioreactorData = () => {
       if (res?.ok) {
         // Auto-assign all active workers to the new experiment
         const activeWorkers = reactors.filter((r) => r.status !== "offline");
+        const freeWorkers = activeWorkers.filter(
+          (r) => !workerAssignmentsRef.current[r.id],
+        );
         await Promise.allSettled(
-          activeWorkers.map((r) =>
+          freeWorkers.map((r) =>
             pioFetch(
               buildApiUrl(
                 `/api/experiments/${encodeURIComponent(name)}/workers`,
@@ -963,6 +1000,7 @@ const usePioreactorData = () => {
     selectExperiment,
     createExperiment,
     assignedUnits,
+    workerAssignments,
     assignReactor,
     unassignReactor,
     refresh: fetchAll,
@@ -1085,6 +1123,7 @@ const Dot = ({ s, th }) => {
       warning: th.warning,
       offline: th.danger,
       unassigned: th.accent,
+      assigned_elsewhere: th.textMuted,
       disconnected: th.textMuted,
     }[s] || th.textMuted;
   return (
@@ -2564,6 +2603,7 @@ export default function App() {
     assignReactor,
     unassignReactor,
     assignedUnits,
+    workerAssignments,
     logs,
     timeRange,
     setTimeRange,
@@ -2694,6 +2734,15 @@ export default function App() {
       showFeedback(
         "No experiment selected",
         "Pick or create an experiment before assigning bioreactors.",
+        "error",
+      );
+      return;
+    }
+    const otherExp = workerAssignments[id];
+    if (otherExp && otherExp !== experiment.experiment) {
+      showFeedback(
+        "Already on another experiment",
+        `${id} is assigned to "${otherExp}". Switch to that experiment and unassign it there first.`,
         "error",
       );
       return;
@@ -2835,9 +2884,9 @@ export default function App() {
           addPumpLogEntry(`Calling: ${jobName} on ${r.id}`);
           let res = await doFetch();
           if (res.status === 404) {
-            addPumpLogEntry(`Assigning ${r.id} to experiment and retrying...`);
-            await assignWorker(r.id, experiment.experiment);
-            res = await doFetch();
+            addPumpLogEntry(
+              `${r.id} is not assigned to "${experiment.experiment}". Assign it on the Bioreactors page first.`,
+            );
           }
           const text = await res.text();
           addPumpLogEntry(`Response ${res.status}: ${text.slice(0, 100)}`);
@@ -3511,20 +3560,11 @@ export default function App() {
               }}
             >
               {connected
-                ? chartLiveMode
-                  ? `${poweredCount} powered · ${online} assigned`
-                  : `${online} assigned to experiment`
+                ? `${poweredCount} bioreactor${poweredCount === 1 ? "" : "s"}`
                 : "Offline. API unreachable"}
             </span>
           </div>
           <div style={{ fontSize: 13, color: th.textMuted, marginTop: 4 }}>
-            {connected && clusterRegisteredCount > 0 && (
-              <span title="Total from GET /api/workers (cluster inventory, includes powered-off units)">
-                {clusterRegisteredCount} registered in cluster
-                {disconnectedCount > 0 ? ` · ${disconnectedCount} offline` : ""}
-                {" · "}
-              </span>
-            )}
             {lastFetch && <b>{lastFetch.toLocaleTimeString()}</b>}
           </div>
         </div>
@@ -4193,6 +4233,65 @@ export default function App() {
                       </span>
                     </div>
                   )}
+                  {r.status === "assigned_elsewhere" && (
+                    <div
+                      style={{
+                        position: "absolute",
+                        inset: 0,
+                        background: `${th.bg}95`,
+                        zIndex: 2,
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: 8,
+                        borderRadius: 14,
+                        backdropFilter: "blur(2px)",
+                        padding: 12,
+                        textAlign: "center",
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: 12,
+                          fontWeight: 700,
+                          color: th.textSecondary,
+                          textTransform: "uppercase",
+                          letterSpacing: "0.04em",
+                        }}
+                      >
+                        On another experiment
+                      </span>
+                      <span
+                        style={{
+                          fontSize: 14,
+                          fontWeight: 600,
+                          color: th.text,
+                        }}
+                      >
+                        {r.assignedExperiment}
+                      </span>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          selectExperiment(r.assignedExperiment);
+                        }}
+                        style={{
+                          padding: "6px 14px",
+                          borderRadius: 8,
+                          border: `1px solid ${th.border}`,
+                          background: th.surface,
+                          color: th.textSecondary,
+                          fontSize: 13,
+                          fontWeight: 600,
+                          fontFamily: "inherit",
+                          cursor: "pointer",
+                        }}
+                      >
+                        Open that experiment
+                      </button>
+                    </div>
+                  )}
                   {r.status === "unassigned" && (
                     <div
                       style={{
@@ -4572,6 +4671,8 @@ export default function App() {
                             ? th.success
                             : r.status === "warning"
                               ? th.warning
+                              : r.status === "assigned_elsewhere"
+                                ? th.textSecondary
                               : r.status === "unassigned"
                                 ? th.accent
                                 : r.status === "disconnected"
@@ -4582,6 +4683,8 @@ export default function App() {
                             ? th.successBg
                             : r.status === "warning"
                               ? th.warningBg
+                              : r.status === "assigned_elsewhere"
+                                ? th.bgAlt
                               : r.status === "unassigned"
                                 ? th.accentLight
                                 : r.status === "disconnected"
@@ -4593,6 +4696,8 @@ export default function App() {
                         ? "Online"
                         : r.status === "warning"
                           ? "Needs Fix"
+                          : r.status === "assigned_elsewhere"
+                            ? `On ${r.assignedExperiment || "other exp"}`
                           : r.status === "unassigned"
                             ? "Unassigned"
                             : r.status === "disconnected"
@@ -4601,6 +4706,24 @@ export default function App() {
                     </span>
                   </div>
                   <div style={{ display: "flex", gap: 6 }}>
+                    {r.status === "assigned_elsewhere" && (
+                      <button
+                        onClick={() => selectExperiment(r.assignedExperiment)}
+                        style={{
+                          padding: "6px 12px",
+                          borderRadius: 7,
+                          border: `1px solid ${th.border}`,
+                          background: th.surface,
+                          color: th.textSecondary,
+                          fontSize: 15,
+                          fontWeight: 600,
+                          cursor: "pointer",
+                          fontFamily: "inherit",
+                        }}
+                      >
+                        Open {r.assignedExperiment}
+                      </button>
+                    )}
                     {r.status === "unassigned" && (
                       <button
                         onClick={() => handleAssign(r.id)}
