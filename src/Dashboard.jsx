@@ -488,7 +488,10 @@ const usePioreactorData = () => {
     //   online       = connected, active, AND assigned (or producing data)
     setReactors(
       withOverrides.map((r, i) => {
-        const isConnected = connectedSet.has(r.id);
+        // If a unit is publishing time series for this experiment, it is reachable
+        // even when the monitor-job probe times out (common right after upgrades).
+        const isConnected =
+          connectedSet.has(r.id) || (i > 0 && workerHasData(i));
         if (r.status === "offline") return { ...r, connected: isConnected }; // manually excluded / is_active=0
         if (!isConnected)
           return { ...r, status: "disconnected", connected: false };
@@ -2523,6 +2526,7 @@ export default function App() {
     startReactorJob,
     assignReactor,
     unassignReactor,
+    assignedUnits,
     logs,
     timeRange,
     setTimeRange,
@@ -2619,6 +2623,10 @@ export default function App() {
   const unassignedCount = reactors.filter(
     (r) => r.status === "unassigned",
   ).length;
+  const poweredCount = reactors.filter(
+    (r) => r.status !== "disconnected",
+  ).length;
+  const disconnectedCount = reactors.length - poweredCount;
   // Disconnected units (registered in the cluster but powered off / unreachable)
   // are hidden from the entire UI — if it's not connected, it's not shown.
   const connectedReactors = reactors.filter((r) => r.status !== "disconnected");
@@ -3483,9 +3491,9 @@ export default function App() {
             >
               {connected
                 ? chartLiveMode
-                  ? `${online} of ${reactors.length} connected`
-                  : `${online} of ${reactors.length} enabled`
-                : "Offline - Not Connected"}
+                  ? `${poweredCount}/${reactors.length} powered · ${online} assigned`
+                  : `${online} assigned · ${reactors.length} in cluster`
+                : "Offline — API unreachable"}
             </span>
           </div>
           <div style={{ fontSize: 14, color: th.textMuted, marginTop: 4 }}>
@@ -3952,6 +3960,18 @@ export default function App() {
                   {experiment.description}
                 </span>
               )}
+              <span
+                style={{
+                  fontSize: 13,
+                  color: assignedUnits.length ? th.textMuted : th.warning,
+                  marginLeft: 4,
+                }}
+                title="Pioreactor 26+ assigns each unit to one experiment at a time via PUT /api/experiments/{name}/workers"
+              >
+                {assignedUnits.length
+                  ? `Assigned: ${assignedUnits.join(", ")}`
+                  : "No bioreactors assigned — use Assign on a tank or the Bioreactors page"}
+              </span>
               {anyJobRunning ? (
                 <button
                   onClick={() => {
@@ -4389,9 +4409,13 @@ export default function App() {
             >
               <div>
                 <p style={{ margin: 0, fontSize: 17, color: th.textSecondary }}>
-                  {connectedReactors.length} connected · {online} assigned ·{" "}
+                  {poweredCount} powered · {online} assigned to "
+                  {experiment?.experiment || "—"}" ·{" "}
                   {unassignedCount > 0
-                    ? `${unassignedCount} unassigned · `
+                    ? `${unassignedCount} powered but unassigned · `
+                    : ""}
+                  {disconnectedCount > 0
+                    ? `${disconnectedCount} offline/unreachable · `
                     : ""}
                   {connectedReactors.filter((r) => r.status === "offline")
                     .length}{" "}
@@ -4658,6 +4682,62 @@ export default function App() {
                 </div>
               ))}
             </div>
+
+            {disconnectedCount > 0 && (
+              <div style={{ marginTop: 20 }}>
+                <h3
+                  style={{
+                    margin: "0 0 10px",
+                    fontSize: 17,
+                    fontWeight: 700,
+                    color: th.textMuted,
+                  }}
+                >
+                  Offline / unreachable ({disconnectedCount})
+                </h3>
+                <p
+                  style={{
+                    margin: "0 0 12px",
+                    fontSize: 15,
+                    color: th.textMuted,
+                    lineHeight: 1.5,
+                  }}
+                >
+                  These units are still in the cluster inventory but did not
+                  respond to a live check. Power them on or fix Wi‑Fi, then
+                  refresh. Assignment is per experiment once they are back.
+                </p>
+                <div
+                  style={{ display: "flex", flexDirection: "column", gap: 8 }}
+                >
+                  {reactors
+                    .filter((r) => r.status === "disconnected")
+                    .map((r) => (
+                      <div
+                        key={r.id}
+                        style={{
+                          padding: "12px 16px",
+                          borderRadius: 10,
+                          border: `1px dashed ${th.border}`,
+                          background: th.bgAlt,
+                          fontSize: 15,
+                          color: th.textMuted,
+                        }}
+                      >
+                        {getCultureLabel(r.id) || r.label}{" "}
+                        <span
+                          style={{
+                            fontFamily: "'JetBrains Mono',monospace",
+                            fontSize: 13,
+                          }}
+                        >
+                          ({r.id})
+                        </span>
+                      </div>
+                    ))}
+                </div>
+              </div>
+            )}
 
             {/* How to add guide */}
             <div
