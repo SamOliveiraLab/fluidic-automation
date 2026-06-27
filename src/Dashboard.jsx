@@ -3514,12 +3514,12 @@ export default function App() {
                 ? chartLiveMode
                   ? `${poweredCount} powered · ${online} assigned`
                   : `${online} assigned to experiment`
-                : "Offline — API unreachable"}
+                : "Offline. API unreachable"}
             </span>
           </div>
           <div style={{ fontSize: 13, color: th.textMuted, marginTop: 4 }}>
             {connected && clusterRegisteredCount > 0 && (
-              <span title="Total from GET /api/workers (cluster inventory — includes powered-off units)">
+              <span title="Total from GET /api/workers (cluster inventory, includes powered-off units)">
                 {clusterRegisteredCount} registered in cluster
                 {disconnectedCount > 0 ? ` · ${disconnectedCount} offline` : ""}
                 {" · "}
@@ -3991,14 +3991,14 @@ export default function App() {
               <span
                 style={{
                   fontSize: 13,
-                  color: assignedUnits.length ? th.textMuted : th.warning,
+                  color: th.textSecondary,
                   marginLeft: 4,
                 }}
-                title="Pioreactor 26+ assigns each unit to one experiment at a time via PUT /api/experiments/{name}/workers"
+                title="Pioreactor assigns each unit to one experiment at a time (PUT /api/experiments/{name}/workers)"
               >
                 {assignedUnits.length
                   ? `Assigned: ${assignedUnits.join(", ")}`
-                  : "No bioreactors assigned — use Assign on a tank or the Bioreactors page"}
+                  : "No bioreactors assigned. Use Assign on a tank or the Bioreactors page."}
               </span>
               {anyJobRunning ? (
                 <button
@@ -4042,7 +4042,7 @@ export default function App() {
                           pending.length > 1 ? "s are" : " is"
                         } not assigned to "${experiment.experiment}": ${names}.\n\nAssign ${
                           pending.length > 1 ? "them" : "it"
-                        } on the Bioreactors page (or with the Assign button on a tank) before starting — otherwise ${
+                        } on the Bioreactors page (or with the Assign button on a tank) before starting. Otherwise ${
                           pending.length > 1 ? "they" : "it"
                         } won't be included.`,
                         "error",
@@ -4438,7 +4438,7 @@ export default function App() {
               <div>
                 <p style={{ margin: 0, fontSize: 17, color: th.textSecondary }}>
                   {poweredCount} powered · {online} assigned to "
-                  {experiment?.experiment || "—"}" · {clusterRegisteredCount}{" "}
+                  {experiment?.experiment || "n/a"}" · {clusterRegisteredCount}{" "}
                   registered in cluster
                   {unassignedCount > 0
                     ? ` · ${unassignedCount} unassigned`
@@ -4932,7 +4932,7 @@ export default function App() {
                     }}
                   >
                     {experiment
-                      ? `"${experiment.experiment}" — merged OD, temperature, and growth rate from Pioreactor time series APIs.`
+                      ? `"${experiment.experiment}": merged OD, temperature, and growth rate from Pioreactor time series APIs.`
                       : "Select an experiment to view data."}
                     {experimentTable.rows.length > 0 && (
                       <>
