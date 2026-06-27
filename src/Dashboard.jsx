@@ -288,6 +288,15 @@ const getLatestTimeSeriesTs = (rawList) => {
 const STALE_EXPERIMENT_MS = 20 * 60 * 1000;
 const UNASSIGN_GRACE_MS = 90 * 1000;
 
+/** Hours of history to load — from experiment start through now. */
+const experimentLookbackHours = (exp) => {
+  const fromCreated = exp?.created_at
+    ? Math.ceil((Date.now() - new Date(exp.created_at).getTime()) / 3600000)
+    : 0;
+  const fromDelta = Math.ceil(Number(exp?.delta_hours) || 0);
+  return Math.max(1, fromCreated, fromDelta, 168);
+};
+
 const unitIdsFromWorkerList = (list) =>
   Array.isArray(list)
     ? list.map((w) => w?.pioreactor_unit || w?.unit || w).filter(Boolean)
@@ -579,11 +588,8 @@ const usePioreactorData = () => {
       if (expJobsRunning) {
         tsQuery = "?target_points=1500&lookback=24";
       } else {
-        // Stopped experiment: 24h lookback returns empty — use full experiment window.
-        const hours = Math.max(
-          168,
-          Math.ceil(Number(activeExp.delta_hours) || 168),
-        );
+        // Stopped experiment: load from beginning of experiment, not last 24h.
+        const hours = experimentLookbackHours(activeExp);
         tsQuery = `?target_points=3000&lookback=${hours}`;
       }
     }
@@ -2568,7 +2574,7 @@ const AnimatedVial = ({
 };
 
 /* ─── TIME RANGE BAR ─── */
-const TimeRangeBar = ({ th, timeRange, setTimeRange, refresh }) => {
+const TimeRangeBar = ({ th, timeRange, setTimeRange, refresh, experimentFullHours }) => {
   const presets = [
     { label: "Live", start: "", end: "" },
     { label: "1h", h: 1 },
@@ -2577,14 +2583,18 @@ const TimeRangeBar = ({ th, timeRange, setTimeRange, refresh }) => {
     { label: "3d", h: 72 },
     { label: "7d", h: 168 },
     { label: "30d", h: 720 },
+    ...(experimentFullHours
+      ? [{ label: "Full", h: experimentFullHours, full: true }]
+      : []),
   ];
   const isLive = !timeRange.start && !timeRange.end;
   const applyPreset = (p) => {
-    if (!p.h) {
+    if (!p.h && !p.full) {
       setTimeRange({ start: "", end: "" });
     } else {
       const end = new Date();
-      const start = new Date(end.getTime() - p.h * 3600000);
+      const hours = p.full ? experimentFullHours : p.h;
+      const start = new Date(end.getTime() - hours * 3600000);
       setTimeRange({ start: start.toISOString(), end: end.toISOString() });
     }
     setTimeout(refresh, 100);
@@ -2592,13 +2602,21 @@ const TimeRangeBar = ({ th, timeRange, setTimeRange, refresh }) => {
   const activePreset = isLive
     ? "Live"
     : presets.find((p) => {
-        if (!p.h || !timeRange.start) return false;
+        if (p.full || !p.h || !timeRange.start) return false;
         return (
           Math.abs(
             new Date(timeRange.end) - new Date(timeRange.start) - p.h * 3600000,
           ) < 60000
         );
-      })?.label || "custom";
+      })?.label ||
+      (experimentFullHours &&
+      timeRange.start &&
+      Math.abs(
+        new Date(timeRange.end) - new Date(timeRange.start) -
+          experimentFullHours * 3600000,
+      ) < 3600000
+        ? "Full"
+        : "custom");
   const toLocal = (iso) => {
     if (!iso) return "";
     const d = new Date(iso);
@@ -3180,6 +3198,21 @@ export default function App() {
   const [runningJobs, setRunningJobs] = useState({});
   const manualJobOverride = useRef({}); // brief optimistic UI after start/stop clicks
   const anyJobRunning = Object.values(runningJobs).some(Boolean);
+  const viewingRecorded = !anyJobRunning;
+  const experimentFullHours = experiment
+    ? experimentLookbackHours(experiment)
+    : 168;
+  const chartSubtitle = (count, liveJobRunning) => {
+    if (!count) {
+      return anyJobRunning ? "Waiting for data..." : "No data recorded";
+    }
+    const live =
+      anyJobRunning && liveJobRunning && chartLiveMode && !viewingRecorded;
+    return `${count} readings${live ? " · Live" : " · recorded"}`;
+  };
+  const chartEmptySub = anyJobRunning
+    ? "Waiting for data…"
+    : "No data recorded for this experiment.";
 
   // Sync RUNNING badges from Pioreactor job metadata; keep 15s optimistic override after clicks.
   useEffect(() => {
@@ -3331,13 +3364,10 @@ export default function App() {
 
   const odP = {
     title: "Optical Density (OD)",
-    subtitle:
-      !runningJobs.od_reading && chartLiveMode
-        ? "Not running"
-        : odData.data.length
-          ? `90° scatter · ${odData.data.length} readings${chartLiveMode ? " · Live" : ""}`
-          : "Waiting for data...",
-    historicalMode: !chartLiveMode,
+    subtitle: odData.data.length
+      ? `90° scatter · ${chartSubtitle(odData.data.length, runningJobs.od_reading)}`
+      : chartEmptySub.replace("…", "..."),
+    historicalMode: !chartLiveMode || viewingRecorded,
     data: odData.data,
     keys: odKeys,
     colors: palette,
@@ -3351,18 +3381,15 @@ export default function App() {
     interpText: I_OD,
     emptyIcon: "◎",
     emptyTitle: "No OD data yet",
-    emptySub: "Waiting for data…",
+    emptySub: chartEmptySub,
     isRunning: !!runningJobs.od_reading,
   };
   const tempP = {
     title: "Temperature (°C)",
-    subtitle:
-      !runningJobs.temperature_automation && chartLiveMode
-        ? "Not running"
-        : tempData.data.length
-          ? `${tempData.data.length} readings${chartLiveMode ? " · Live" : ""}`
-          : "Waiting for data...",
-    historicalMode: !chartLiveMode,
+    subtitle: tempData.data.length
+      ? chartSubtitle(tempData.data.length, runningJobs.temperature_automation)
+      : chartEmptySub.replace("…", "..."),
+    historicalMode: !chartLiveMode || viewingRecorded,
     data: tempData.data,
     keys: tempKeys,
     colors: palette,
@@ -3376,7 +3403,7 @@ export default function App() {
     interpText: I_TEMP,
     emptyIcon: "🌡️",
     emptyTitle: "No temperature data",
-    emptySub: "Waiting for data…",
+    emptySub: chartEmptySub,
     isRunning: !!runningJobs.temperature_automation,
     headerExtra: (
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -3447,13 +3474,13 @@ export default function App() {
   };
   const grP = {
     title: "Growth Rate",
-    subtitle:
-      !runningJobs.growth_rate_calculating && chartLiveMode
-        ? "Not running"
-        : growthData.data.length
-          ? `${growthData.data.length} readings${chartLiveMode ? " · Live" : ""}`
-          : "Waiting for data...",
-    historicalMode: !chartLiveMode,
+    subtitle: growthData.data.length
+      ? chartSubtitle(
+          growthData.data.length,
+          runningJobs.growth_rate_calculating,
+        )
+      : chartEmptySub.replace("…", "..."),
+    historicalMode: !chartLiveMode || viewingRecorded,
     data: growthData.data,
     keys: growthKeys,
     colors: palette,
@@ -3470,7 +3497,7 @@ export default function App() {
     interpText: I_GR,
     emptyIcon: "📈",
     emptyTitle: "No growth rate data",
-    emptySub: "Waiting for data…",
+    emptySub: chartEmptySub,
     isRunning: !!runningJobs.growth_rate_calculating,
   };
 
@@ -4265,6 +4292,7 @@ export default function App() {
               timeRange={timeRange}
               setTimeRange={setTimeRange}
               refresh={refresh}
+              experimentFullHours={experimentFullHours}
             />
             <div
               style={{
@@ -5086,6 +5114,7 @@ export default function App() {
               timeRange={timeRange}
               setTimeRange={setTimeRange}
               refresh={refresh}
+              experimentFullHours={experimentFullHours}
             />
             <Chart th={th} {...odP} />
           </div>
@@ -5097,6 +5126,7 @@ export default function App() {
               timeRange={timeRange}
               setTimeRange={setTimeRange}
               refresh={refresh}
+              experimentFullHours={experimentFullHours}
             />
             <Chart th={th} {...tempP} />
           </div>
@@ -5108,6 +5138,7 @@ export default function App() {
               timeRange={timeRange}
               setTimeRange={setTimeRange}
               refresh={refresh}
+              experimentFullHours={experimentFullHours}
             />
             <Chart th={th} {...grP} />
           </div>
@@ -5120,6 +5151,7 @@ export default function App() {
               timeRange={timeRange}
               setTimeRange={setTimeRange}
               refresh={refresh}
+              experimentFullHours={experimentFullHours}
             />
             <div
               style={{
