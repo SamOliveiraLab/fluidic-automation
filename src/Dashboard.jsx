@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import CalibrationsPage from "./CalibrationsPage";
-import { mergeRawTimeSeries, mergeChartDatasets, downloadCsv } from "./experimentData";
+import { mergeRawTimeSeries, mergeChartDatasets, downloadCsv, normalizeTimeSeriesRaw } from "./experimentData";
 import { apiGet as workerApiGet } from "./pioreactorApi";
 import {
   AreaChart,
@@ -72,8 +72,10 @@ const api = async (path) => {
 // API returns: { series: ["unit1-ch","unit2-ch"], data: [[{x,y},...],[{x,y},...]] }
 // We need:    [{ t:"HH:MM", r01: value, r02: value }, ...]
 const transformTimeSeries = (raw, workers, { maxPoints = 300 } = {}) => {
-  if (!raw?.series?.length || !raw?.data?.length)
+  const norm = normalizeTimeSeriesRaw(raw);
+  if (!norm?.series?.length || !norm?.data?.length)
     return { data: [], keys: [], latestByKey: {} };
+  raw = norm;
 
   const keyMap = {};
   const keys = [];
@@ -252,6 +254,26 @@ const parseWorkerAssignments = (raw) => {
   return map;
 };
 
+/** Jobs that mean an experiment is actively running (not monitor). */
+const EXPERIMENT_JOB_NAMES = new Set([
+  "stirring",
+  "od_reading",
+  "temperature_automation",
+  "temperature_control",
+  "growth_rate_calculating",
+  "dosing_automation",
+  "dosing_control",
+  "led_automation",
+]);
+
+const hasExperimentJobsRunning = (jobFlags) =>
+  Object.keys(jobFlags || {}).some((name) => EXPERIMENT_JOB_NAMES.has(name));
+
+const unitIdsFromWorkerList = (list) =>
+  Array.isArray(list)
+    ? list.map((w) => w?.pioreactor_unit || w?.unit || w).filter(Boolean)
+    : [];
+
 /** Normalize GET /api/workers/{unit}/jobs/running (unit_api job metadata rows). */
 const parseRunningJobs = (jobs, experimentName) => {
   if (!Array.isArray(jobs)) return [];
@@ -380,6 +402,11 @@ const usePioreactorData = () => {
   useEffect(() => {
     timeRangeRef.current = timeRange;
   }, [timeRange]);
+  /** True after experiment jobs were seen running; enables auto-unassign when they all stop. */
+  const experimentHadJobsRef = useRef(false);
+  useEffect(() => {
+    experimentHadJobsRef.current = false;
+  }, [selectedExpName]);
 
   // Persist overrides to localStorage so they survive page refresh
   const loadOverrides = () => {
@@ -464,11 +491,7 @@ const usePioreactorData = () => {
     setWorkerAssignments(workerAssignmentMap);
     workerAssignmentsRef.current = workerAssignmentMap;
     const assignedSet = Array.isArray(assignedRaw)
-      ? new Set(
-          assignedRaw
-            .map((w) => w?.pioreactor_unit || w?.unit || w)
-            .filter(Boolean),
-        )
+      ? new Set(unitIdsFromWorkerList(assignedRaw))
       : null; // null = endpoint unavailable (older firmware) → fall back to data heuristic
     setAssignedUnits(assignedSet ? [...assignedSet] : []);
 
@@ -617,9 +640,25 @@ const usePioreactorData = () => {
         return isConnected && r.status !== "offline" ? r.id : null;
       })
       .filter(Boolean);
-    setRunningJobsFromApi(
-      await fetchRunningJobsForUnits(poweredForJobs, activeExp.experiment),
+    const jobFlags = await fetchRunningJobsForUnits(
+      poweredForJobs,
+      activeExp.experiment,
     );
+    if (hasExperimentJobsRunning(jobFlags)) {
+      experimentHadJobsRef.current = true;
+    } else if (
+      experimentHadJobsRef.current &&
+      assignedSet &&
+      assignedSet.size > 0
+    ) {
+      // Experiment was running and all jobs stopped — free the bioreactors.
+      await unassignAllFromExperiment(activeExp.experiment);
+      experimentHadJobsRef.current = false;
+      assignedSet.clear();
+      setAssignedUnits([]);
+      setTimeout(fetchAll, 400);
+    }
+    setRunningJobsFromApi(jobFlags);
 
     // 5. Fetch logs
     const logsRaw = await api(`/api/experiments/${expName}/logs`);
@@ -714,6 +753,35 @@ const usePioreactorData = () => {
       Array.isArray(list) &&
       list.some((w) => (w?.pioreactor_unit || w?.unit || w) === unitId)
     );
+  };
+
+  // Remove every bioreactor from an experiment (frees units for the next run).
+  const unassignAllFromExperiment = async (expName) => {
+    const expEnc = encodeURIComponent(expName);
+    const units = unitIdsFromWorkerList(
+      await api(`/api/experiments/${expEnc}/workers`),
+    );
+    if (!units.length) return { success: true, unassigned: 0 };
+
+    await Promise.allSettled(
+      units.map((unitId) =>
+        pioFetch(
+          buildApiUrl(
+            `/api/experiments/${expEnc}/workers/${encodeURIComponent(unitId)}`,
+          ),
+          { method: "DELETE" },
+        ),
+      ),
+    );
+
+    const remaining = unitIdsFromWorkerList(
+      await api(`/api/experiments/${expEnc}/workers`),
+    );
+    return {
+      success: remaining.length === 0,
+      unassigned: units.length - remaining.length,
+      total: units.length,
+    };
   };
 
   // Assign a worker to the current experiment via the collection endpoint
@@ -865,16 +933,33 @@ const usePioreactorData = () => {
     };
   };
 
-  // Stop ALL jobs on ALL workers for the current experiment
+  // Stop ALL jobs on ALL workers for the current experiment, then unassign every bioreactor.
   // Preferred: POST /api/workers/jobs/stop/experiments/{exp} (newer Pioreactor)
-  // Fallback 1: POST /api/workers/{unit}/jobs/stop/experiments/{exp} per online worker
+  // Fallback 1: POST /api/workers/{unit}/jobs/stop/experiments/{exp} per assigned worker
   // Fallback 2: stop known jobs one-by-one per worker (oldest Pioreactor versions)
   const stopExperiment = async () => {
     if (!experiment) return { success: false, error: "No active experiment" };
-    const expEnc = encodeURIComponent(experiment.experiment);
-    const onlineReactors = reactors.filter((r) => r.status === "online");
-    if (!onlineReactors.length)
-      return { success: false, error: "No online bioreactors" };
+    const expName = experiment.experiment;
+    const expEnc = encodeURIComponent(expName);
+    const assignedIds = unitIdsFromWorkerList(
+      await api(`/api/experiments/${expEnc}/workers`),
+    );
+    const stopTargets =
+      assignedIds.length > 0
+        ? assignedIds
+        : reactors.filter((r) => r.status === "online").map((r) => r.id);
+    if (!stopTargets.length) {
+      const unassignOnly = await unassignAllFromExperiment(expName);
+      experimentHadJobsRef.current = false;
+      setTimeout(fetchAll, 400);
+      return {
+        success: true,
+        unassigned: unassignOnly.unassigned,
+        message: "No reactors to stop; assignments cleared.",
+      };
+    }
+
+    let jobsStopped = false;
 
     // Attempt 1: cluster-wide bulk stop
     try {
@@ -882,73 +967,72 @@ const usePioreactorData = () => {
         buildApiUrl(`/api/workers/jobs/stop/experiments/${expEnc}`),
         { method: "POST" },
       );
-      if (res.ok) {
-        setTimeout(fetchAll, 2000);
-        return { success: true };
-      }
+      if (res.ok) jobsStopped = true;
     } catch {
       /* fall through */
     }
 
     // Attempt 2: per-worker bulk stop
-    const perWorker = await Promise.allSettled(
-      onlineReactors.map((r) =>
-        pioFetch(
-          buildApiUrl(
-            `/api/workers/${encodeURIComponent(r.id)}/jobs/stop/experiments/${expEnc}`,
-          ),
-          { method: "POST" },
-        ),
-      ),
-    );
-    const okPerWorker = perWorker.filter(
-      (r) => r.status === "fulfilled" && r.value?.ok,
-    ).length;
-    if (okPerWorker === onlineReactors.length) {
-      setTimeout(fetchAll, 2000);
-      return { success: true };
-    }
-
-    // Attempt 3: per-job per-worker (known job names)
-    const jobs = [
-      "stirring",
-      "od_reading",
-      "temperature_automation",
-      "temperature_control",
-      "growth_rate_calculating",
-      "dosing_automation",
-      "dosing_control",
-      "led_automation",
-    ];
-    const results = await Promise.allSettled(
-      onlineReactors.flatMap((r) =>
-        jobs.map((j) =>
+    if (!jobsStopped) {
+      const perWorker = await Promise.allSettled(
+        stopTargets.map((unitId) =>
           pioFetch(
             buildApiUrl(
-              `/api/workers/${encodeURIComponent(r.id)}/jobs/stop/job_name/${j}/experiments/${expEnc}`,
+              `/api/workers/${encodeURIComponent(unitId)}/jobs/stop/experiments/${expEnc}`,
             ),
             { method: "POST" },
           ),
         ),
-      ),
-    );
-    const anyOk = results.some((r) => r.status === "fulfilled" && r.value?.ok);
+      );
+      const okPerWorker = perWorker.filter(
+        (r) => r.status === "fulfilled" && r.value?.ok,
+      ).length;
+      if (okPerWorker > 0) jobsStopped = true;
+    }
+
+    // Attempt 3: per-job per-worker (known job names)
+    if (!jobsStopped) {
+      const jobs = [...EXPERIMENT_JOB_NAMES];
+      const results = await Promise.allSettled(
+        stopTargets.flatMap((unitId) =>
+          jobs.map((j) =>
+            pioFetch(
+              buildApiUrl(
+                `/api/workers/${encodeURIComponent(unitId)}/jobs/stop/job_name/${j}/experiments/${expEnc}`,
+              ),
+              { method: "POST" },
+            ),
+          ),
+        ),
+      );
+      jobsStopped = results.some((r) => r.status === "fulfilled" && r.value?.ok);
+    }
+
+    const unassignRes = await unassignAllFromExperiment(expName);
+    experimentHadJobsRef.current = false;
     setTimeout(fetchAll, 2000);
-    if (anyOk || okPerWorker > 0) {
+
+    if (jobsStopped || unassignRes.unassigned > 0) {
       return {
         success: true,
-        partial: okPerWorker < onlineReactors.length,
-        workersStopped: Math.max(okPerWorker, 0),
-        workersTotal: onlineReactors.length,
+        unassigned: unassignRes.unassigned,
+        partial: !unassignRes.success,
       };
     }
-    return { success: false, error: "All stop endpoints returned errors." };
+    return {
+      success: false,
+      error: "Could not stop jobs or clear bioreactor assignments.",
+    };
   };
 
   const selectExperiment = (expName) => {
     setSelectedExpName(expName);
     selectedExpRef.current = expName;
     setTimeout(fetchAll, 100);
+  };
+
+  const markExperimentHadJobs = () => {
+    experimentHadJobsRef.current = true;
   };
 
   const createExperiment = async (name, description = "") => {
@@ -1023,6 +1107,7 @@ const usePioreactorData = () => {
     startReactorJob,
     stopJob,
     stopExperiment,
+    markExperimentHadJobs,
     selectExperiment,
     createExperiment,
     assignedUnits,
@@ -2623,6 +2708,7 @@ export default function App() {
     startJob,
     stopJob,
     stopExperiment,
+    markExperimentHadJobs,
     selectExperiment,
     createExperiment,
     startReactorJob,
@@ -3154,6 +3240,7 @@ export default function App() {
       manualJobOverride.current.growth_rate_calculating = now;
     }
     setRunningJobs((prev) => ({ ...prev, ...nextRunning }));
+    if (steps.some((s) => s.success)) markExperimentHadJobs();
     setTimeout(refresh, 3000);
 
     const failed = steps.filter((s) => !s.success);
@@ -3187,6 +3274,14 @@ export default function App() {
     : [{ key: "r01", label: "Bioreactor 01", s: "R-01" }];
   const tempKeys = tempData.keys.length ? tempData.keys : odKeys;
   const growthKeys = growthData.keys.length ? growthData.keys : odKeys;
+
+  // Experiment Data page: live chart series first, then full-res export table from fetch
+  const experimentTableView = useMemo(() => {
+    const fromCharts = mergeChartDatasets(odData, tempData, growthData);
+    if (fromCharts.rows.length > 0) return fromCharts;
+    if (experimentTable?.rows?.length > 0) return experimentTable;
+    return { rows: [], columns: [] };
+  }, [experimentTable, odData, tempData, growthData]);
 
   // Dynamic colors for however many reactors exist
   const palette = [
@@ -5083,10 +5178,10 @@ export default function App() {
                     {experiment
                       ? `"${experiment.experiment}": merged OD, temperature, and growth rate from Pioreactor time series APIs.`
                       : "Select an experiment to view data."}
-                    {experimentTable.rows.length > 0 && (
+                    {experimentTableView.rows.length > 0 && (
                       <>
                         {" "}
-                        {experimentTable.rows.length.toLocaleString()} rows
+                        {experimentTableView.rows.length.toLocaleString()} rows
                         {assignedUnits.length > 0 &&
                           ` · assigned: ${assignedUnits.join(", ")}`}
                       </>
@@ -5096,28 +5191,28 @@ export default function App() {
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <button
                     onClick={() => {
-                      if (!experimentTable.rows.length) return;
+                      if (!experimentTableView.rows.length) return;
                       const slug = (experiment?.experiment || "experiment")
                         .replace(/[^\w.-]+/g, "_")
                         .slice(0, 60);
                       downloadCsv(
-                        experimentTable.rows,
-                        experimentTable.columns,
+                        experimentTableView.rows,
+                        experimentTableView.columns,
                         `${slug}_all_readings`,
                       );
                     }}
-                    disabled={!experimentTable.rows.length}
+                    disabled={!experimentTableView.rows.length}
                     style={{
                       padding: "8px 16px",
                       borderRadius: 8,
                       border: "none",
-                      background: experimentTable.rows.length
+                      background: experimentTableView.rows.length
                         ? th.accent
                         : th.bgAlt,
-                      color: experimentTable.rows.length ? "#fff" : th.textMuted,
+                      color: experimentTableView.rows.length ? "#fff" : th.textMuted,
                       fontSize: 14,
                       fontWeight: 700,
-                      cursor: experimentTable.rows.length
+                      cursor: experimentTableView.rows.length
                         ? "pointer"
                         : "not-allowed",
                       fontFamily: "inherit",
@@ -5155,7 +5250,7 @@ export default function App() {
                 >
                   Pick an experiment from the Overview bar or sidebar.
                 </div>
-              ) : experimentTable.rows.length === 0 ? (
+              ) : experimentTableView.rows.length === 0 ? (
                 <div
                   style={{
                     padding: 48,
@@ -5178,7 +5273,7 @@ export default function App() {
                     }}
                   >
                     Preview (first 500 rows). Export CSV downloads the full dataset
-                    ({experimentTable.rows.length.toLocaleString()} rows).
+                    ({experimentTableView.rows.length.toLocaleString()} rows).
                   </div>
                   <div style={{ maxHeight: "65vh", overflow: "auto" }}>
                     <table
@@ -5191,7 +5286,7 @@ export default function App() {
                     >
                       <thead>
                         <tr>
-                          {experimentTable.columns.map((col) => (
+                          {experimentTableView.columns.map((col) => (
                             <th
                               key={col.key}
                               style={{
@@ -5212,7 +5307,7 @@ export default function App() {
                         </tr>
                       </thead>
                       <tbody>
-                        {experimentTable.rows.slice(0, 500).map((row, i) => (
+                        {experimentTableView.rows.slice(0, 500).map((row, i) => (
                           <tr
                             key={row._ts ?? i}
                             style={{
@@ -5220,7 +5315,7 @@ export default function App() {
                                 i % 2 === 0 ? th.surface : th.bgAlt + "80",
                             }}
                           >
-                            {experimentTable.columns.map((col) => (
+                            {experimentTableView.columns.map((col) => (
                               <td
                                 key={col.key}
                                 style={{
@@ -6636,7 +6731,8 @@ export default function App() {
               <strong style={{ color: th.text }}>
                 {experiment?.experiment}
               </strong>
-              . Data is kept.
+              . Bioreactors are unassigned immediately so they are free for the
+              next experiment. Data is kept.
             </p>
             <div style={{ display: "flex", gap: 10 }}>
               <button
@@ -6661,9 +6757,13 @@ export default function App() {
                       manualJobOverride.current[j] = now;
                     });
                     setRunningJobs({});
+                    const unassigned =
+                      res.unassigned > 0
+                        ? ` ${res.unassigned} bioreactor(s) unassigned.`
+                        : "";
                     showFeedback(
                       "Experiment stopped",
-                      `All jobs stopped on ${experiment?.experiment}.`,
+                      `All jobs stopped on ${experiment?.experiment}.${unassigned}`,
                       "success",
                     );
                   } else {

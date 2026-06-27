@@ -93,6 +93,11 @@ export const mergeChartDatasets = (odData, tempData, growthData) => {
   const map = new Map();
   const columnMeta = new Map();
 
+  const labelForKey = (ds, key) => {
+    const hit = ds?.keys?.find((k) => k.key === key);
+    return hit?.label || key;
+  };
+
   const ingest = (ds, suffix) => {
     if (!ds?.data?.length) return;
     for (const row of ds.data) {
@@ -111,7 +116,10 @@ export const mergeChartDatasets = (odData, tempData, growthData) => {
         const v = row[key];
         if (v == null || !Number.isFinite(Number(v))) continue;
         const colKey = `${key}_${suffix}`;
-        columnMeta.set(colKey, { key: colKey, label: `${key}_${suffix}` });
+        columnMeta.set(colKey, {
+          key: colKey,
+          label: `${labelForKey(ds, key)}_${suffix}`,
+        });
         out[colKey] = Number(v);
       }
     }
