@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import CalibrationsPage from "./CalibrationsPage";
-import { mergeExperimentDatasets, downloadCsv } from "./experimentData";
+import { mergeRawTimeSeries, mergeChartDatasets, downloadCsv } from "./experimentData";
 import { apiGet as workerApiGet } from "./pioreactorApi";
 import {
   AreaChart,
@@ -112,7 +112,7 @@ const transformTimeSeries = (raw, workers, { maxPoints = 300 } = {}) => {
           " " +
           d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })
         : d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
-      const bucket = showDate ? `${ts}` : timeStr;
+      const bucket = `${ts}`;
       if (!timeMap[bucket]) timeMap[bucket] = { t: timeStr, _ts: ts };
       timeMap[bucket][key] = point.y;
     });
@@ -472,33 +472,59 @@ const usePioreactorData = () => {
       : null; // null = endpoint unavailable (older firmware) → fall back to data heuristic
     setAssignedUnits(assignedSet ? [...assignedSet] : []);
 
-    // 3. Fetch all time series in parallel (with optional date range)
+    // 3. Fetch time series (Pioreactor 26.x: lookback + target_points)
     const tr = timeRangeRef.current;
-    const rangeQ =
-      (tr.start ? `&start=${encodeURIComponent(tr.start)}` : "") +
-      (tr.end ? `&end=${encodeURIComponent(tr.end)}` : "");
-    const modN = !tr.start && !tr.end ? 1 : 5;
+    let tsQuery = "?target_points=3000&lookback=168";
+    if (tr.start && tr.end) {
+      const hours = Math.max(
+        1,
+        Math.ceil(
+          (new Date(tr.end).getTime() - new Date(tr.start).getTime()) /
+            3600000,
+        ),
+      );
+      tsQuery = `?target_points=3000&lookback=${hours}`;
+    } else if (!tr.start && !tr.end) {
+      tsQuery = "?target_points=1500&lookback=24";
+    }
     const [odRaw, tempRaw, growthRaw] = await Promise.all([
       api(
-        `/api/experiments/${expName}/time_series/od_readings?filter_mod_N=${modN}${rangeQ}`,
+        `/api/experiments/${expName}/time_series/od_readings${tsQuery}`,
       ),
       api(
-        `/api/experiments/${expName}/time_series/temperature_readings?filter_mod_N=${modN}${rangeQ}`,
+        `/api/experiments/${expName}/time_series/temperature_readings${tsQuery}`,
       ),
       api(
-        `/api/experiments/${expName}/time_series/growth_rates?filter_mod_N=${modN}${rangeQ}`,
+        `/api/experiments/${expName}/time_series/growth_rates${tsQuery}`,
       ),
     ]);
 
     setOdData(transformTimeSeries(odRaw, workers));
     setTempData(transformTimeSeries(tempRaw, workers));
     setGrowthData(transformTimeSeries(growthRaw, workers));
+
+    const odT = transformTimeSeries(odRaw, workers, { maxPoints: 0 });
+    const tempT = transformTimeSeries(tempRaw, workers, { maxPoints: 0 });
+    const grT = transformTimeSeries(growthRaw, workers, { maxPoints: 0 });
+    const fromRaw = mergeRawTimeSeries(
+      [
+        { raw: odRaw, suffix: "od" },
+        { raw: tempRaw, suffix: "temp" },
+        { raw: growthRaw, suffix: "gr" },
+      ],
+      workers,
+    );
+    const fromCharts = mergeChartDatasets(odT, tempT, grT);
     setExperimentTable(
-      mergeExperimentDatasets(
-        transformTimeSeries(odRaw, workers, { maxPoints: 0 }),
-        transformTimeSeries(tempRaw, workers, { maxPoints: 0 }),
-        transformTimeSeries(growthRaw, workers, { maxPoints: 0 }),
-      ),
+      fromRaw.rows.length > 0
+        ? fromRaw
+        : fromCharts.rows.length > 0
+          ? fromCharts
+          : mergeChartDatasets(
+              transformTimeSeries(odRaw, workers),
+              transformTimeSeries(tempRaw, workers),
+              transformTimeSeries(growthRaw, workers),
+            ),
     );
 
     // 3b. Determine which units are physically connected right now.
