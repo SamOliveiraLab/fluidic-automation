@@ -269,6 +269,25 @@ const EXPERIMENT_JOB_NAMES = new Set([
 const hasExperimentJobsRunning = (jobFlags) =>
   Object.keys(jobFlags || {}).some((name) => EXPERIMENT_JOB_NAMES.has(name));
 
+/** Latest sample timestamp across raw time_series payloads (ms), or 0. */
+const getLatestTimeSeriesTs = (rawList) => {
+  let max = 0;
+  for (const raw of rawList) {
+    const norm = normalizeTimeSeriesRaw(raw);
+    if (!norm) continue;
+    for (const series of norm.data) {
+      for (const p of series || []) {
+        const ts = new Date(p.x).getTime();
+        if (Number.isFinite(ts) && ts > max) max = ts;
+      }
+    }
+  }
+  return max;
+};
+
+const STALE_EXPERIMENT_MS = 20 * 60 * 1000;
+const UNASSIGN_GRACE_MS = 90 * 1000;
+
 const unitIdsFromWorkerList = (list) =>
   Array.isArray(list)
     ? list.map((w) => w?.pioreactor_unit || w?.unit || w).filter(Boolean)
@@ -404,8 +423,12 @@ const usePioreactorData = () => {
   }, [timeRange]);
   /** True after experiment jobs were seen running; enables auto-unassign when they all stop. */
   const experimentHadJobsRef = useRef(false);
+  const prevHadExperimentJobsRef = useRef(false);
+  /** Block stale auto-unassign briefly after assign/start clicks. */
+  const unassignGraceUntilRef = useRef(0);
   useEffect(() => {
     experimentHadJobsRef.current = false;
+    prevHadExperimentJobsRef.current = false;
   }, [selectedExpName]);
 
   // Persist overrides to localStorage so they survive page refresh
@@ -640,24 +663,43 @@ const usePioreactorData = () => {
         return isConnected && r.status !== "offline" ? r.id : null;
       })
       .filter(Boolean);
+    const assignedIds = assignedSet ? [...assignedSet] : [];
     const jobFlags = await fetchRunningJobsForUnits(
       poweredForJobs,
       activeExp.experiment,
     );
-    if (hasExperimentJobsRunning(jobFlags)) {
+    const assignedJobFlags =
+      assignedIds.length > 0
+        ? await fetchRunningJobsForUnits(assignedIds, activeExp.experiment)
+        : {};
+    const hadJobs =
+      hasExperimentJobsRunning(jobFlags) ||
+      hasExperimentJobsRunning(assignedJobFlags);
+    const latestDataTs = getLatestTimeSeriesTs([odRaw, tempRaw, growthRaw]);
+    const dataIsStale =
+      latestDataTs > 0 && Date.now() - latestDataTs > STALE_EXPERIMENT_MS;
+    const stoppedThisSession =
+      prevHadExperimentJobsRef.current &&
+      !hadJobs &&
+      experimentHadJobsRef.current;
+    const pastGrace = Date.now() > unassignGraceUntilRef.current;
+
+    if (hadJobs) {
       experimentHadJobsRef.current = true;
     } else if (
-      experimentHadJobsRef.current &&
       assignedSet &&
-      assignedSet.size > 0
+      assignedSet.size > 0 &&
+      pastGrace &&
+      (stoppedThisSession || dataIsStale)
     ) {
-      // Experiment was running and all jobs stopped — free the bioreactors.
+      // Running → stopped this session, or clearly finished earlier (stale data).
       await unassignAllFromExperiment(activeExp.experiment);
       experimentHadJobsRef.current = false;
       assignedSet.clear();
       setAssignedUnits([]);
       setTimeout(fetchAll, 400);
     }
+    prevHadExperimentJobsRef.current = hadJobs;
     setRunningJobsFromApi(jobFlags);
 
     // 5. Fetch logs
@@ -816,6 +858,7 @@ const usePioreactorData = () => {
       };
     }
     const success = await assignWorker(unitId, experiment.experiment);
+    if (success) unassignGraceUntilRef.current = Date.now() + UNASSIGN_GRACE_MS;
     setTimeout(fetchAll, 400);
     return success
       ? { success: true }
@@ -1033,6 +1076,7 @@ const usePioreactorData = () => {
 
   const markExperimentHadJobs = () => {
     experimentHadJobsRef.current = true;
+    unassignGraceUntilRef.current = Date.now() + UNASSIGN_GRACE_MS;
   };
 
   const createExperiment = async (name, description = "") => {
@@ -1077,6 +1121,7 @@ const usePioreactorData = () => {
         );
         setSelectedExpName(name);
         selectedExpRef.current = name;
+        unassignGraceUntilRef.current = Date.now() + UNASSIGN_GRACE_MS;
         setTimeout(fetchAll, 500);
         return { success: true };
       }
