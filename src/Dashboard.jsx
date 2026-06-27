@@ -293,6 +293,43 @@ const unitIdsFromWorkerList = (list) =>
     ? list.map((w) => w?.pioreactor_unit || w?.unit || w).filter(Boolean)
     : [];
 
+const isUnitAssigned = async (unitId, expEnc) => {
+  const list = await api(`/api/experiments/${expEnc}/workers`);
+  return (
+    Array.isArray(list) &&
+    list.some((w) => (w?.pioreactor_unit || w?.unit || w) === unitId)
+  );
+};
+
+/** Remove every bioreactor from an experiment (frees units for the next run). */
+const unassignAllFromExperiment = async (expName) => {
+  const expEnc = encodeURIComponent(expName);
+  const units = unitIdsFromWorkerList(
+    await api(`/api/experiments/${expEnc}/workers`),
+  );
+  if (!units.length) return { success: true, unassigned: 0 };
+
+  await Promise.allSettled(
+    units.map((unitId) =>
+      pioFetch(
+        buildApiUrl(
+          `/api/experiments/${expEnc}/workers/${encodeURIComponent(unitId)}`,
+        ),
+        { method: "DELETE" },
+      ),
+    ),
+  );
+
+  const remaining = unitIdsFromWorkerList(
+    await api(`/api/experiments/${expEnc}/workers`),
+  );
+  return {
+    success: remaining.length === 0,
+    unassigned: units.length - remaining.length,
+    total: units.length,
+  };
+};
+
 /** Normalize GET /api/workers/{unit}/jobs/running (unit_api job metadata rows). */
 const parseRunningJobs = (jobs, experimentName) => {
   if (!Array.isArray(jobs)) return [];
@@ -517,6 +554,14 @@ const usePioreactorData = () => {
       ? new Set(unitIdsFromWorkerList(assignedRaw))
       : null; // null = endpoint unavailable (older firmware) → fall back to data heuristic
     setAssignedUnits(assignedSet ? [...assignedSet] : []);
+    const assignedIds = assignedSet ? [...assignedSet] : [];
+
+    // Probe assigned units first — drives lookback window and stale unassign.
+    const assignedJobFlags =
+      assignedIds.length > 0
+        ? await fetchRunningJobsForUnits(assignedIds, activeExp.experiment)
+        : {};
+    const expJobsRunning = hasExperimentJobsRunning(assignedJobFlags);
 
     // 3. Fetch time series (Pioreactor 26.x: lookback + target_points)
     const tr = timeRangeRef.current;
@@ -531,7 +576,16 @@ const usePioreactorData = () => {
       );
       tsQuery = `?target_points=3000&lookback=${hours}`;
     } else if (!tr.start && !tr.end) {
-      tsQuery = "?target_points=1500&lookback=24";
+      if (expJobsRunning) {
+        tsQuery = "?target_points=1500&lookback=24";
+      } else {
+        // Stopped experiment: 24h lookback returns empty — use full experiment window.
+        const hours = Math.max(
+          168,
+          Math.ceil(Number(activeExp.delta_hours) || 168),
+        );
+        tsQuery = `?target_points=3000&lookback=${hours}`;
+      }
     }
     const [odRaw, tempRaw, growthRaw] = await Promise.all([
       api(
@@ -663,15 +717,10 @@ const usePioreactorData = () => {
         return isConnected && r.status !== "offline" ? r.id : null;
       })
       .filter(Boolean);
-    const assignedIds = assignedSet ? [...assignedSet] : [];
     const jobFlags = await fetchRunningJobsForUnits(
       poweredForJobs,
       activeExp.experiment,
     );
-    const assignedJobFlags =
-      assignedIds.length > 0
-        ? await fetchRunningJobsForUnits(assignedIds, activeExp.experiment)
-        : {};
     const hadJobs =
       hasExperimentJobsRunning(jobFlags) ||
       hasExperimentJobsRunning(assignedJobFlags);
@@ -682,6 +731,8 @@ const usePioreactorData = () => {
       prevHadExperimentJobsRef.current &&
       !hadJobs &&
       experimentHadJobsRef.current;
+    const assignedHasNoJobs =
+      assignedIds.length > 0 && !hasExperimentJobsRunning(assignedJobFlags);
     const pastGrace = Date.now() > unassignGraceUntilRef.current;
 
     if (hadJobs) {
@@ -690,6 +741,7 @@ const usePioreactorData = () => {
       assignedSet &&
       assignedSet.size > 0 &&
       pastGrace &&
+      assignedHasNoJobs &&
       (stoppedThisSession || dataIsStale)
     ) {
       // Running → stopped this session, or clearly finished earlier (stale data).
@@ -786,44 +838,6 @@ const usePioreactorData = () => {
       ).catch(() => {});
       return prev.map((r) => (r.id === id ? { ...r, status: newStatus } : r));
     });
-  };
-
-  // Is `unitId` currently assigned to `expEnc`? Reads the assignment list back.
-  const isUnitAssigned = async (unitId, expEnc) => {
-    const list = await api(`/api/experiments/${expEnc}/workers`);
-    return (
-      Array.isArray(list) &&
-      list.some((w) => (w?.pioreactor_unit || w?.unit || w) === unitId)
-    );
-  };
-
-  // Remove every bioreactor from an experiment (frees units for the next run).
-  const unassignAllFromExperiment = async (expName) => {
-    const expEnc = encodeURIComponent(expName);
-    const units = unitIdsFromWorkerList(
-      await api(`/api/experiments/${expEnc}/workers`),
-    );
-    if (!units.length) return { success: true, unassigned: 0 };
-
-    await Promise.allSettled(
-      units.map((unitId) =>
-        pioFetch(
-          buildApiUrl(
-            `/api/experiments/${expEnc}/workers/${encodeURIComponent(unitId)}`,
-          ),
-          { method: "DELETE" },
-        ),
-      ),
-    );
-
-    const remaining = unitIdsFromWorkerList(
-      await api(`/api/experiments/${expEnc}/workers`),
-    );
-    return {
-      success: remaining.length === 0,
-      unassigned: units.length - remaining.length,
-      total: units.length,
-    };
   };
 
   // Assign a worker to the current experiment via the collection endpoint
