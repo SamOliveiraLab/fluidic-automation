@@ -734,13 +734,7 @@ const usePioreactorData = () => {
         if (Object.keys(workerAssignmentMap).length > 0 || assignedSet) {
           return { ...base, status: "unassigned", connected: true };
         }
-        // Older firmware fallback: infer from time-series presence.
-        if (i === 0) return { ...base, status: "online", connected: true };
-        return {
-          ...base,
-          status: workerHasData(i) ? "online" : "unassigned",
-          connected: true,
-        };
+        return { ...base, status: "unassigned", connected: true };
       }),
     );
 
@@ -1153,41 +1147,8 @@ const usePioreactorData = () => {
         body: JSON.stringify({ experiment: name, description }),
       });
       if (res?.ok) {
-        // Auto-assign all active workers to the new experiment
-        const activeWorkers = reactors.filter((r) => r.status !== "offline");
-        const freeWorkers = activeWorkers.filter(
-          (r) => !workerAssignmentsRef.current[r.id],
-        );
-        await Promise.allSettled(
-          freeWorkers.map((r) =>
-            pioFetch(
-              buildApiUrl(
-                `/api/experiments/${encodeURIComponent(name)}/workers`,
-              ),
-              {
-                method: "PUT",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ pioreactor_unit: r.id }),
-              },
-            )
-              .catch(() =>
-                // Try alternate endpoint format
-                pioFetch(
-                  buildApiUrl(
-                    `/api/experiments/${encodeURIComponent(name)}/workers/${encodeURIComponent(r.id)}`,
-                  ),
-                  {
-                    method: "PUT",
-                    headers: { "Content-Type": "application/json" },
-                  },
-                ),
-              )
-              .catch(() => {}),
-          ),
-        );
         setSelectedExpName(name);
         selectedExpRef.current = name;
-        unassignGraceUntilRef.current = Date.now() + UNASSIGN_GRACE_MS;
         setTimeout(fetchAll, 500);
         return { success: true };
       }
@@ -2831,6 +2792,9 @@ export default function App() {
 
   // Start experiment config modal
   const [showStartExp, setShowStartExp] = useState(false);
+  const [showAssignPicker, setShowAssignPicker] = useState(false);
+  const [assignPickerIds, setAssignPickerIds] = useState([]);
+  const [assigningPicker, setAssigningPicker] = useState(false);
   const [startingExp, setStartingExp] = useState(false);
   const [startCfg, setStartCfg] = useState(() => {
     try {
@@ -2892,6 +2856,50 @@ export default function App() {
   const disconnectedUnassigned = reactors.filter(
     (r) => r.status === "disconnected" && !assignedUnits.includes(r.id),
   );
+  const assignableReactors = connectedReactors.filter(
+    (r) => r.status === "unassigned",
+  );
+  const openStartFlow = () => {
+    if (!experiment) return;
+    if (assignedOnlineIds.length === 0) {
+      setAssignPickerIds([]);
+      setShowAssignPicker(true);
+      return;
+    }
+    setShowStartExp(true);
+  };
+  const toggleAssignPickerId = (id) => {
+    setAssignPickerIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
+  };
+  const handleAssignPickerContinue = async () => {
+    if (!assignPickerIds.length) {
+      showFeedback(
+        "Select bioreactors",
+        "Choose at least one bioreactor to assign before starting.",
+        "error",
+      );
+      return;
+    }
+    setAssigningPicker(true);
+    const results = await Promise.all(
+      assignPickerIds.map((id) => assignReactor(id)),
+    );
+    setAssigningPicker(false);
+    const failed = results.filter((r) => !r.success);
+    if (failed.length) {
+      showFeedback(
+        "Could not assign all bioreactors",
+        failed[0]?.error || "The Pioreactor API rejected an assignment.",
+        "error",
+      );
+      return;
+    }
+    setShowAssignPicker(false);
+    setAssignPickerIds([]);
+    setShowStartExp(true);
+  };
   const [assigningId, setAssigningId] = useState(null);
   // The Overview shows one reactor's readings at a time; this is the selected one.
   const [selectedReactorId, setSelectedReactorId] = useState(null);
@@ -4280,30 +4288,7 @@ export default function App() {
                 </button>
               ) : (
                 <button
-                  onClick={() => {
-                    if (!experiment) return;
-                    const pending = reactors.filter(
-                      (r) => r.status === "unassigned",
-                    );
-                    if (pending.length) {
-                      const names = pending
-                        .map((r) => getCultureLabel(r.id) || r.label)
-                        .join(", ");
-                      showFeedback(
-                        "Assign bioreactors first",
-                        `${pending.length} connected bioreactor${
-                          pending.length > 1 ? "s are" : " is"
-                        } not assigned to "${experiment.experiment}": ${names}.\n\nAssign ${
-                          pending.length > 1 ? "them" : "it"
-                        } on the Bioreactors page (or with the Assign button on a tank) before starting. Otherwise ${
-                          pending.length > 1 ? "they" : "it"
-                        } won't be included.`,
-                        "error",
-                      );
-                      return;
-                    }
-                    setShowStartExp(true);
-                  }}
+                  onClick={openStartFlow}
                   disabled={!experiment || !connected}
                   style={{
                     padding: "6px 14px",
@@ -6414,6 +6399,179 @@ export default function App() {
                   color: th.textSecondary,
                   fontWeight: 600,
                   fontSize: 16,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Assign bioreactors before start */}
+      {showAssignPicker && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.4)",
+            zIndex: 1000,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+          onClick={() => !assigningPicker && setShowAssignPicker(false)}
+        >
+          <div
+            style={{
+              background: th.surface,
+              borderRadius: 16,
+              padding: "24px 28px",
+              width: 460,
+              maxWidth: "90vw",
+              maxHeight: "88vh",
+              overflowY: "auto",
+              boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2
+              style={{
+                margin: "0 0 6px",
+                fontSize: 20,
+                fontWeight: 700,
+                color: th.text,
+              }}
+            >
+              Assign bioreactors
+            </h2>
+            <p
+              style={{
+                margin: "0 0 18px",
+                fontSize: 13,
+                color: th.textMuted,
+                lineHeight: 1.5,
+              }}
+            >
+              Select which bioreactors to include in "
+              {experiment?.experiment}". Only assigned units will run — others
+              stay free.
+            </p>
+            {assignableReactors.length ? (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 8,
+                  marginBottom: 20,
+                }}
+              >
+                {assignableReactors.map((r) => {
+                  const checked = assignPickerIds.includes(r.id);
+                  return (
+                    <label
+                      key={r.id}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 12,
+                        padding: "12px 14px",
+                        borderRadius: 10,
+                        border: `1px solid ${checked ? th.accent : th.border}`,
+                        background: checked ? th.accentLight : th.bgAlt,
+                        cursor: "pointer",
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleAssignPickerId(r.id)}
+                      />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div
+                          style={{
+                            fontSize: 15,
+                            fontWeight: 700,
+                            color: th.text,
+                          }}
+                        >
+                          {getCultureLabel(r.id) || r.label}
+                        </div>
+                        <div
+                          style={{
+                            fontFamily: "'JetBrains Mono',monospace",
+                            fontSize: 13,
+                            color: th.textMuted,
+                          }}
+                        >
+                          {r.id}
+                        </div>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            ) : (
+              <p
+                style={{
+                  margin: "0 0 20px",
+                  fontSize: 14,
+                  color: th.textMuted,
+                  lineHeight: 1.5,
+                }}
+              >
+                No unassigned bioreactors are available. Assign units from the
+                Overview or Bioreactors page, or unassign them from another
+                experiment first.
+              </p>
+            )}
+            <div style={{ display: "flex", gap: 10 }}>
+              <button
+                onClick={handleAssignPickerContinue}
+                disabled={
+                  assigningPicker ||
+                  !assignableReactors.length ||
+                  !assignPickerIds.length
+                }
+                style={{
+                  flex: 1,
+                  padding: "11px",
+                  borderRadius: 10,
+                  border: "none",
+                  background: th.accent,
+                  color: "#fff",
+                  fontWeight: 700,
+                  fontSize: 15,
+                  cursor:
+                    assigningPicker ||
+                    !assignableReactors.length ||
+                    !assignPickerIds.length
+                      ? "not-allowed"
+                      : "pointer",
+                  fontFamily: "inherit",
+                  opacity:
+                    assigningPicker ||
+                    !assignableReactors.length ||
+                    !assignPickerIds.length
+                      ? 0.6
+                      : 1,
+                }}
+              >
+                {assigningPicker ? "Assigning…" : "Assign & configure start"}
+              </button>
+              <button
+                onClick={() => setShowAssignPicker(false)}
+                disabled={assigningPicker}
+                style={{
+                  padding: "11px 18px",
+                  borderRadius: 10,
+                  border: `1px solid ${th.border}`,
+                  background: "transparent",
+                  color: th.textSecondary,
+                  fontWeight: 600,
+                  fontSize: 15,
                   cursor: "pointer",
                   fontFamily: "inherit",
                 }}
