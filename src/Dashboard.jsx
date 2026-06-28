@@ -964,7 +964,14 @@ const usePioreactorData = () => {
           delayMs: 500,
         });
       }
-      return accepted;
+      if (!accepted) return false;
+      // HTTP 202/200 is not enough — stirring often logs "Disconnected" immediately.
+      await new Promise((r) => setTimeout(r, 2000));
+      const flags = await fetchRunningJobsForUnits(
+        [unitId],
+        experiment.experiment,
+      );
+      return !!flags[jobName];
     } catch {
       return false;
     }
@@ -3362,12 +3369,19 @@ export default function App() {
     const steps = [];
     const labelOf = (r) => getCultureLabel(r.id) || r.label;
 
-    // Stirring (per reactor)
+    // Stirring (per reactor) — abort if stir motor does not connect
     for (const r of targets) {
       const ok = await startReactorJob(r.id, "stirring", {
         target_rpm: String(settingsFor(r).rpm),
       });
       steps.push({ name: `${labelOf(r)} · stirring`, success: ok });
+      if (!ok) {
+        return {
+          success: false,
+          steps,
+          error: `${labelOf(r)} stirring did not start (0 RPM / Disconnected). The Pioreactor could not connect to the stir motor — fix this in the native Pioreactor UI before running an experiment.`,
+        };
+      }
     }
     await sleep(1500);
 
