@@ -470,11 +470,6 @@ const usePioreactorData = () => {
   /** From GET /api/workers/{unit}/jobs/running per powered unit. */
   const [runningJobsFromApi, setRunningJobsFromApi] = useState({});
   const [lastFetch, setLastFetch] = useState(null);
-  const [timeRange, setTimeRange] = useState({ start: "", end: "" });
-  const timeRangeRef = useRef(timeRange);
-  useEffect(() => {
-    timeRangeRef.current = timeRange;
-  }, [timeRange]);
   /** True after experiment jobs were seen running; enables auto-unassign when they all stop. */
   const experimentHadJobsRef = useRef(false);
   const prevHadExperimentJobsRef = useRef(false);
@@ -581,25 +576,13 @@ const usePioreactorData = () => {
     const expJobsRunning = hasExperimentJobsRunning(assignedJobFlags);
 
     // 3. Fetch time series (Pioreactor 26.x: lookback + target_points)
-    const tr = timeRangeRef.current;
     let tsQuery = "?target_points=3000&lookback=168";
-    if (tr.start && tr.end) {
-      const hours = Math.max(
-        1,
-        Math.ceil(
-          (new Date(tr.end).getTime() - new Date(tr.start).getTime()) /
-            3600000,
-        ),
-      );
+    if (expJobsRunning) {
+      tsQuery = "?target_points=1500&lookback=24";
+    } else {
+      // Stopped experiment: load from beginning of experiment, not last 24h.
+      const hours = experimentLookbackHours(activeExp);
       tsQuery = `?target_points=3000&lookback=${hours}`;
-    } else if (!tr.start && !tr.end) {
-      if (expJobsRunning) {
-        tsQuery = "?target_points=1500&lookback=24";
-      } else {
-        // Stopped experiment: load from beginning of experiment, not last 24h.
-        const hours = experimentLookbackHours(activeExp);
-        tsQuery = `?target_points=3000&lookback=${hours}`;
-      }
     }
     const [odRaw, tempRaw, growthRaw] = await Promise.all([
       api(
@@ -1182,8 +1165,6 @@ const usePioreactorData = () => {
     growthData,
     experimentTable,
     logs,
-    timeRange,
-    setTimeRange,
     addReactor,
     removeReactor,
     toggleStatus,
@@ -2722,166 +2703,6 @@ const AnimatedVial = ({
   );
 };
 
-/* ─── TIME RANGE BAR ─── */
-const TimeRangeBar = ({ th, timeRange, setTimeRange, refresh, experimentFullHours }) => {
-  const presets = [
-    { label: "Live", start: "", end: "" },
-    { label: "1h", h: 1 },
-    { label: "6h", h: 6 },
-    { label: "24h", h: 24 },
-    { label: "3d", h: 72 },
-    { label: "7d", h: 168 },
-    { label: "30d", h: 720 },
-    ...(experimentFullHours
-      ? [{ label: "Full", h: experimentFullHours, full: true }]
-      : []),
-  ];
-  const isLive = !timeRange.start && !timeRange.end;
-  const applyPreset = (p) => {
-    if (!p.h && !p.full) {
-      setTimeRange({ start: "", end: "" });
-    } else {
-      const end = new Date();
-      const hours = p.full ? experimentFullHours : p.h;
-      const start = new Date(end.getTime() - hours * 3600000);
-      setTimeRange({ start: start.toISOString(), end: end.toISOString() });
-    }
-    setTimeout(refresh, 100);
-  };
-  const activePreset = isLive
-    ? "Live"
-    : presets.find((p) => {
-        if (p.full || !p.h || !timeRange.start) return false;
-        return (
-          Math.abs(
-            new Date(timeRange.end) - new Date(timeRange.start) - p.h * 3600000,
-          ) < 60000
-        );
-      })?.label ||
-      (experimentFullHours &&
-      timeRange.start &&
-      Math.abs(
-        new Date(timeRange.end) - new Date(timeRange.start) -
-          experimentFullHours * 3600000,
-      ) < 3600000
-        ? "Full"
-        : "custom");
-  const toLocal = (iso) => {
-    if (!iso) return "";
-    const d = new Date(iso);
-    const pad = (n) => String(n).padStart(2, "0");
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  };
-  const fromLocal = (val) => (val ? new Date(val).toISOString() : "");
-  return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        flexWrap: "nowrap",
-        overflowX: "auto",
-        marginBottom: 16,
-        padding: "12px 16px",
-        background: th.surface,
-        border: `1px solid ${th.border}`,
-        borderRadius: 12,
-        boxShadow: th.shadow,
-        WebkitOverflowScrolling: "touch",
-      }}
-    >
-      <span
-        style={{
-          fontSize: 14,
-          fontWeight: 600,
-          color: th.textMuted,
-          textTransform: "uppercase",
-          letterSpacing: "0.06em",
-          marginRight: 4,
-        }}
-      >
-        Time Range
-      </span>
-      {presets.map((p) => (
-        <button
-          key={p.label}
-          onClick={() => applyPreset(p)}
-          style={{
-            padding: "5px 12px",
-            borderRadius: 7,
-            border: `1px solid ${activePreset === p.label ? th.accent : th.border}`,
-            background: activePreset === p.label ? th.accent : th.bgAlt,
-            color: activePreset === p.label ? "#fff" : th.textSecondary,
-            fontSize: 14,
-            fontWeight: 600,
-            cursor: "pointer",
-            fontFamily: "inherit",
-          }}
-        >
-          {p.label}
-        </button>
-      ))}
-      <div
-        style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: 8 }}
-      >
-        <input
-          type="datetime-local"
-          value={toLocal(timeRange.start)}
-          onChange={(e) => {
-            const s = fromLocal(e.target.value);
-            setTimeRange((prev) => ({ ...prev, start: s }));
-          }}
-          style={{
-            padding: "4px 8px",
-            borderRadius: 6,
-            border: `1px solid ${th.border}`,
-            background: th.bgAlt,
-            color: th.text,
-            fontSize: 13,
-            fontFamily: "'JetBrains Mono',monospace",
-            outline: "none",
-          }}
-        />
-        <span style={{ color: th.textMuted, fontSize: 13 }}>→</span>
-        <input
-          type="datetime-local"
-          value={toLocal(timeRange.end)}
-          onChange={(e) => {
-            const en = fromLocal(e.target.value);
-            setTimeRange((prev) => ({ ...prev, end: en }));
-          }}
-          style={{
-            padding: "4px 8px",
-            borderRadius: 6,
-            border: `1px solid ${th.border}`,
-            background: th.bgAlt,
-            color: th.text,
-            fontSize: 13,
-            fontFamily: "'JetBrains Mono',monospace",
-            outline: "none",
-          }}
-        />
-        <button
-          onClick={refresh}
-          style={{
-            padding: "5px 12px",
-            borderRadius: 7,
-            border: `1px solid ${th.accent}`,
-            background: th.accent,
-            color: "#fff",
-            fontSize: 13,
-            fontWeight: 600,
-            cursor: "pointer",
-            fontFamily: "inherit",
-          }}
-        >
-          Go
-        </button>
-      </div>
-    </div>
-  );
-};
-
 /* ─── MAIN ─── */
 export default function App() {
   const [mode, setMode] = useState("light");
@@ -2920,8 +2741,6 @@ export default function App() {
     assignedUnits,
     workerAssignments,
     logs,
-    timeRange,
-    setTimeRange,
     refresh,
     activeCalibrations,
     fetchError,
@@ -3012,16 +2831,10 @@ export default function App() {
   const showFeedback = (title, message, tone = "info") =>
     setFeedback({ open: true, title, message, tone });
 
-  const online = reactors.filter((r) => r.status === "online").length;
-  const unassignedCount = reactors.filter(
-    (r) => r.status === "unassigned",
-  ).length;
   const poweredCount = reactors.filter(
     (r) => r.status !== "disconnected",
   ).length;
   const disconnectedCount = reactors.length - poweredCount;
-  /** All units registered on the leader (GET /api/workers), including offline workers. */
-  const clusterRegisteredCount = reactors.length;
   // Disconnected units (registered in the cluster but powered off / unreachable)
   // are hidden from the entire UI — if it's not connected, it's not shown.
   const connectedReactors = reactors.filter((r) => r.status !== "disconnected");
@@ -3092,7 +2905,7 @@ export default function App() {
     }
   };
 
-  const chartLiveMode = !timeRange.start && !timeRange.end;
+  const chartLiveMode = true;
   const loadChartPref = (key, fallback) => {
     try {
       const v = localStorage.getItem(key);
@@ -3396,9 +3209,6 @@ export default function App() {
   const anyJobRunning = Object.values(runningJobs).some(Boolean);
   /** Jobs actively running on this experiment right now (not archive, not assignment). */
   const experimentIsLive = anyJobRunning;
-  const experimentFullHours = experiment
-    ? experimentLookbackHours(experiment)
-    : 168;
   const chartSubtitle = (count, liveJobRunning, { archive = false } = {}) => {
     if (!count) {
       return experimentIsLive ? "Waiting for data..." : "No data recorded";
@@ -4506,13 +4316,6 @@ export default function App() {
               </button>
             </div>
 
-            <TimeRangeBar
-              th={th}
-              timeRange={timeRange}
-              setTimeRange={setTimeRange}
-              refresh={refresh}
-              experimentFullHours={experimentFullHours}
-            />
             <div
               style={{
                 display: "flex",
@@ -4886,28 +4689,10 @@ export default function App() {
             <div
               style={{
                 display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
+                justifyContent: "flex-end",
                 marginBottom: 20,
               }}
             >
-              <div>
-                <p style={{ margin: 0, fontSize: 17, color: th.textSecondary }}>
-                  {poweredCount} powered · {online} assigned to "
-                  {experiment?.experiment || "n/a"}" · {clusterRegisteredCount}{" "}
-                  registered in cluster
-                  {unassignedCount > 0
-                    ? ` · ${unassignedCount} unassigned`
-                    : ""}
-                  {disconnectedCount > 0
-                    ? ` · ${disconnectedCount} offline`
-                    : ""}
-                  {connectedReactors.filter((r) => r.status === "offline").length >
-                  0
-                    ? ` · ${connectedReactors.filter((r) => r.status === "offline").length} excluded`
-                    : ""}
-                </p>
-              </div>
               <button
                 onClick={() => setShowAddReactor(true)}
                 style={{
@@ -5332,39 +5117,18 @@ export default function App() {
 
         {page === "od" && (
           <div style={{ padding: "24px" }}>
-            <TimeRangeBar
-              th={th}
-              timeRange={timeRange}
-              setTimeRange={setTimeRange}
-              refresh={refresh}
-              experimentFullHours={experimentFullHours}
-            />
             <ChartDisplayControls th={th} keys={odKeys} {...chartCtrl} />
             <Chart th={th} {...odP} {...chartPlotProps} />
           </div>
         )}
         {page === "temp" && (
           <div style={{ padding: "24px" }}>
-            <TimeRangeBar
-              th={th}
-              timeRange={timeRange}
-              setTimeRange={setTimeRange}
-              refresh={refresh}
-              experimentFullHours={experimentFullHours}
-            />
             <ChartDisplayControls th={th} keys={tempKeys} {...chartCtrl} />
             <Chart th={th} {...tempP} {...chartPlotProps} />
           </div>
         )}
         {page === "growth" && (
           <div style={{ padding: "24px" }}>
-            <TimeRangeBar
-              th={th}
-              timeRange={timeRange}
-              setTimeRange={setTimeRange}
-              refresh={refresh}
-              experimentFullHours={experimentFullHours}
-            />
             <ChartDisplayControls th={th} keys={growthKeys} {...chartCtrl} />
             <Chart th={th} {...grP} {...chartPlotProps} />
           </div>
@@ -5372,13 +5136,6 @@ export default function App() {
 
         {page === "data" && (
           <div style={{ padding: "24px" }}>
-            <TimeRangeBar
-              th={th}
-              timeRange={timeRange}
-              setTimeRange={setTimeRange}
-              refresh={refresh}
-              experimentFullHours={experimentFullHours}
-            />
             <div
               style={{
                 background: th.surface,
