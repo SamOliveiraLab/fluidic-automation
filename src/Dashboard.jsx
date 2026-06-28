@@ -71,11 +71,12 @@ const api = async (path) => {
 // Transform Pioreactor time_series response → chart-friendly format
 // API returns: { series: ["unit1-ch","unit2-ch"], data: [[{x,y},...],[{x,y},...]] }
 // We need:    [{ t:"HH:MM", r01: value, r02: value }, ...]
-const transformTimeSeries = (raw, workers, { maxPoints = 300 } = {}) => {
+const transformTimeSeries = (raw, workers, { maxPoints = 300, gapBreakMs } = {}) => {
   const norm = normalizeTimeSeriesRaw(raw);
   if (!norm?.series?.length || !norm?.data?.length)
     return { data: [], keys: [], latestByKey: {} };
   raw = norm;
+  if (gapBreakMs === undefined) gapBreakMs = readChartGapBreakMs();
 
   const keyMap = {};
   const keys = [];
@@ -121,6 +122,22 @@ const transformTimeSeries = (raw, workers, { maxPoints = 300 } = {}) => {
   });
 
   let data = Object.values(timeMap).sort((a, b) => a._ts - b._ts);
+  if (gapBreakMs > 0) {
+    const lastTsByKey = {};
+    const withBreaks = [];
+    for (const row of data) {
+      for (const k of keys.map((x) => x.key)) {
+        if (row[k] == null || !Number.isFinite(Number(row[k]))) continue;
+        const ts = row._ts;
+        if (lastTsByKey[k] != null && ts - lastTsByKey[k] > gapBreakMs) {
+          withBreaks.push({ t: "", _ts: lastTsByKey[k] + 1, [k]: null });
+        }
+        lastTsByKey[k] = ts;
+      }
+      withBreaks.push(row);
+    }
+    data = withBreaks;
+  }
   // Latest sample per series *before* downsampling - decimation drops tail rows and
   // would otherwise make "live" detection think data is minutes old.
   const latestByKey = {};
@@ -269,24 +286,15 @@ const EXPERIMENT_JOB_NAMES = new Set([
 const hasExperimentJobsRunning = (jobFlags) =>
   Object.keys(jobFlags || {}).some((name) => EXPERIMENT_JOB_NAMES.has(name));
 
-/** Latest sample timestamp across raw time_series payloads (ms), or 0. */
-const getLatestTimeSeriesTs = (rawList) => {
-  let max = 0;
-  for (const raw of rawList) {
-    const norm = normalizeTimeSeriesRaw(raw);
-    if (!norm) continue;
-    for (const series of norm.data) {
-      for (const p of series || []) {
-        const ts = new Date(p.x).getTime();
-        if (Number.isFinite(ts) && ts > max) max = ts;
-      }
-    }
-  }
-  return max;
-};
+const UNASSIGN_GRACE_MS = 5 * 60 * 1000;
+const DEFAULT_GAP_BREAK_MS = 15 * 60 * 1000;
 
-const STALE_EXPERIMENT_MS = 20 * 60 * 1000;
-const UNASSIGN_GRACE_MS = 90 * 1000;
+const readChartGapBreakMs = () => {
+  try {
+    if (localStorage.getItem("pio_chart_gap_breaks") === "0") return 0;
+  } catch {}
+  return DEFAULT_GAP_BREAK_MS;
+};
 
 /** Hours of history to load — from experiment start through now. */
 const experimentLookbackHours = (exp) => {
@@ -565,7 +573,7 @@ const usePioreactorData = () => {
     setAssignedUnits(assignedSet ? [...assignedSet] : []);
     const assignedIds = assignedSet ? [...assignedSet] : [];
 
-    // Probe assigned units first — drives lookback window and stale unassign.
+    // Probe assigned units — separate from time-series fetch (used for live vs archive window).
     const assignedJobFlags =
       assignedIds.length > 0
         ? await fetchRunningJobsForUnits(assignedIds, activeExp.experiment)
@@ -605,9 +613,21 @@ const usePioreactorData = () => {
       ),
     ]);
 
-    setOdData(transformTimeSeries(odRaw, workers));
-    setTempData(transformTimeSeries(tempRaw, workers));
-    setGrowthData(transformTimeSeries(growthRaw, workers));
+    setOdData(
+      transformTimeSeries(odRaw, workers, {
+        maxPoints: expJobsRunning ? 300 : 2000,
+      }),
+    );
+    setTempData(
+      transformTimeSeries(tempRaw, workers, {
+        maxPoints: expJobsRunning ? 300 : 2000,
+      }),
+    );
+    setGrowthData(
+      transformTimeSeries(growthRaw, workers, {
+        maxPoints: expJobsRunning ? 300 : 2000,
+      }),
+    );
 
     const odT = transformTimeSeries(odRaw, workers, { maxPoints: 0 });
     const tempT = transformTimeSeries(tempRaw, workers, { maxPoints: 0 });
@@ -730,9 +750,6 @@ const usePioreactorData = () => {
     const hadJobs =
       hasExperimentJobsRunning(jobFlags) ||
       hasExperimentJobsRunning(assignedJobFlags);
-    const latestDataTs = getLatestTimeSeriesTs([odRaw, tempRaw, growthRaw]);
-    const dataIsStale =
-      latestDataTs > 0 && Date.now() - latestDataTs > STALE_EXPERIMENT_MS;
     const stoppedThisSession =
       prevHadExperimentJobsRef.current &&
       !hadJobs &&
@@ -748,9 +765,11 @@ const usePioreactorData = () => {
       assignedSet.size > 0 &&
       pastGrace &&
       assignedHasNoJobs &&
-      (stoppedThisSession || dataIsStale)
+      stoppedThisSession
     ) {
-      // Running → stopped this session, or clearly finished earlier (stale data).
+      // Jobs were running this session and all stopped — free bioreactors.
+      // Do NOT use old time-series timestamps here; past experiments keep
+      // historical data and that was incorrectly triggering unassign mid-run.
       await unassignAllFromExperiment(activeExp.experiment);
       experimentHadJobsRef.current = false;
       assignedSet.clear();
@@ -1492,6 +1511,111 @@ const InterpModal = ({ open, onClose, th, title, text: interpText }) => {
   );
 };
 
+const ctrlBtn = (th, active) => ({
+  padding: "5px 11px",
+  borderRadius: 7,
+  background: active ? th.accent : th.bgAlt,
+  color: active ? "#fff" : th.textMuted,
+  border: `1px solid ${active ? th.accent : th.border}`,
+  cursor: "pointer",
+  fontSize: 13,
+  fontWeight: 600,
+  fontFamily: "inherit",
+});
+
+/** Shared chart view options (series, layout, gap breaks). */
+const ChartDisplayControls = ({
+  th,
+  keys,
+  seriesFilter,
+  setSeriesFilter,
+  chartLayout,
+  setChartLayout,
+  gapBreaks,
+  setGapBreaks,
+}) => {
+  if (!keys?.length || keys.length <= 1) return null;
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        flexWrap: "wrap",
+        marginBottom: 16,
+        padding: "10px 14px",
+        background: th.surface,
+        border: `1px solid ${th.border}`,
+        borderRadius: 12,
+        boxShadow: th.shadow,
+      }}
+    >
+      <span
+        style={{
+          fontSize: 13,
+          fontWeight: 600,
+          color: th.textMuted,
+          textTransform: "uppercase",
+          letterSpacing: "0.05em",
+        }}
+      >
+        Chart view
+      </span>
+      <button
+        type="button"
+        onClick={() => setSeriesFilter("all")}
+        style={ctrlBtn(th, seriesFilter === "all")}
+      >
+        All
+      </button>
+      {keys.map((k) => (
+        <button
+          key={k.key}
+          type="button"
+          onClick={() => setSeriesFilter(k.key)}
+          style={ctrlBtn(th, seriesFilter === k.key)}
+        >
+          {k.label}
+        </button>
+      ))}
+      <span style={{ color: th.border, margin: "0 4px" }}>|</span>
+      <button
+        type="button"
+        onClick={() => setChartLayout("overlay")}
+        style={ctrlBtn(th, chartLayout === "overlay")}
+      >
+        Combined
+      </button>
+      <button
+        type="button"
+        onClick={() => setChartLayout("separate")}
+        style={ctrlBtn(th, chartLayout === "separate")}
+      >
+        Separate
+      </button>
+      <label
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 6,
+          marginLeft: 4,
+          fontSize: 13,
+          fontWeight: 600,
+          color: th.textSecondary,
+          cursor: "pointer",
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={gapBreaks}
+          onChange={(e) => setGapBreaks(e.target.checked)}
+        />
+        Break lines at 15 min gaps
+      </label>
+    </div>
+  );
+};
+
 const Chart = ({
   th,
   title,
@@ -1514,13 +1638,57 @@ const Chart = ({
   isRunning,
   historicalMode,
   headerExtra,
+  seriesFilter = "all",
+  chartLayout = "overlay",
 }) => {
-  const [filter, setFilter] = useState("both");
+  const filter = seriesFilter === "all" ? "both" : seriesFilter;
   const [showI, setShowI] = useState(false);
   const ref = useRef(null);
-  // In live mode, hide the chart once the job is stopped so the user isn't
-  // confused by stale data. Historical mode (time range set) keeps showing.
   const has = data?.length > 0 && (isRunning || historicalMode);
+  const visibleKeys =
+    filter === "both" ? keys : keys.filter((k) => k.key === filter);
+
+  if (has && chartLayout === "separate" && keys.length > 1) {
+    return (
+      <>
+        {visibleKeys.map((dk) => {
+          const i = keys.findIndex((k) => k.key === dk.key);
+          return (
+            <Chart
+              key={dk.key}
+              th={th}
+              title={`${title} — ${dk.label}`}
+              subtitle={subtitle}
+              data={data}
+              keys={[dk]}
+              colors={[colors[i] ?? colors[0]]}
+              yFmt={yFmt}
+              csvCols={csvCols}
+              csvName={`${csvName}_${dk.key}`}
+              interpTitle={interpTitle}
+              interpText={interpText}
+              emptyIcon={emptyIcon}
+              emptyTitle={emptyTitle}
+              emptySub={emptySub}
+              isRunning={isRunning}
+              historicalMode={historicalMode}
+              headerExtra={headerExtra}
+              seriesFilter="all"
+              chartLayout="overlay"
+            />
+          );
+        })}
+        <InterpModal
+          open={showI}
+          onClose={() => setShowI(false)}
+          th={th}
+          title={interpTitle}
+          text={interpText || ""}
+        />
+      </>
+    );
+  }
+
   return (
     <>
       <div
@@ -1568,29 +1736,6 @@ const Chart = ({
               flexWrap: "wrap",
             }}
           >
-            {has &&
-              keys.length > 1 &&
-              ["both", ...keys.map((k) => k.key)].map((f) => (
-                <button
-                  key={f}
-                  onClick={() => setFilter(f)}
-                  style={{
-                    padding: "6px 12px",
-                    borderRadius: 7,
-                    background: filter === f ? th.accent : th.bgAlt,
-                    color: filter === f ? "#fff" : th.textMuted,
-                    border: `1px solid ${filter === f ? th.accent : th.border}`,
-                    cursor: "pointer",
-                    fontSize: 15,
-                    fontWeight: 600,
-                    fontFamily: "inherit",
-                  }}
-                >
-                  {f === "both"
-                    ? "Both"
-                    : keys.find((k) => k.key === f)?.s || f}
-                </button>
-              ))}
             {interpText && (
               <button
                 onClick={() => setShowI(true)}
@@ -1746,21 +1891,24 @@ const Chart = ({
                     tickFormatter={yFmt || ((v) => v.toFixed(3))}
                   />
                   <Tooltip content={<Tip th={th} />} />
-                  {keys.map(
-                    (dk, i) =>
+                  {visibleKeys.map((dk, i) => {
+                    const ci = keys.findIndex((k) => k.key === dk.key);
+                    return (
                       (filter === "both" || filter === dk.key) && (
                         <Area
                           key={dk.key}
                           type="monotone"
                           dataKey={dk.key}
                           name={dk.label}
-                          stroke={colors[i]}
+                          stroke={colors[ci >= 0 ? ci : i]}
                           fill={`url(#f-${csvName}-${dk.key})`}
                           strokeWidth={2.5}
                           dot={false}
+                          connectNulls
                         />
-                      ),
-                  )}
+                      )
+                    );
+                  })}
                 </AreaChart>
               </ResponsiveContainer>
             </div>
@@ -1773,7 +1921,8 @@ const Chart = ({
                 flexWrap: "wrap",
               }}
             >
-              {keys.map((dk, i) => {
+              {visibleKeys.map((dk) => {
+                const i = keys.findIndex((k) => k.key === dk.key);
                 const vals = data
                   .map((d) => d[dk.key])
                   .filter((v) => v != null);
@@ -1796,7 +1945,7 @@ const Chart = ({
                         style={{
                           fontSize: 20,
                           fontWeight: 700,
-                          color: colors[i],
+                          color: colors[i >= 0 ? i : 0],
                           fontFamily: "'JetBrains Mono',monospace",
                         }}
                       >
@@ -2944,6 +3093,53 @@ export default function App() {
   };
 
   const chartLiveMode = !timeRange.start && !timeRange.end;
+  const loadChartPref = (key, fallback) => {
+    try {
+      const v = localStorage.getItem(key);
+      if (v != null && v !== "") return v;
+    } catch {}
+    return fallback;
+  };
+  const [chartSeriesFilter, setChartSeriesFilter] = useState(() =>
+    loadChartPref("pio_chart_series", "all"),
+  );
+  const [chartLayout, setChartLayout] = useState(() =>
+    loadChartPref("pio_chart_layout", "overlay"),
+  );
+  const [chartGapBreaks, setChartGapBreaks] = useState(
+    () => loadChartPref("pio_chart_gap_breaks", "1") !== "0",
+  );
+  const setChartSeriesFilterPersist = (v) => {
+    setChartSeriesFilter(v);
+    try {
+      localStorage.setItem("pio_chart_series", v);
+    } catch {}
+  };
+  const setChartLayoutPersist = (v) => {
+    setChartLayout(v);
+    try {
+      localStorage.setItem("pio_chart_layout", v);
+    } catch {}
+  };
+  const setChartGapBreaksPersist = (on) => {
+    setChartGapBreaks(on);
+    try {
+      localStorage.setItem("pio_chart_gap_breaks", on ? "1" : "0");
+    } catch {}
+    refresh();
+  };
+  const chartCtrl = {
+    seriesFilter: chartSeriesFilter,
+    setSeriesFilter: setChartSeriesFilterPersist,
+    chartLayout,
+    setChartLayout: setChartLayoutPersist,
+    gapBreaks: chartGapBreaks,
+    setGapBreaks: setChartGapBreaksPersist,
+  };
+  const chartPlotProps = {
+    seriesFilter: chartSeriesFilter,
+    chartLayout,
+  };
   const telemetryByReactor = useMemo(
     () =>
       buildPerReactorTelemetry(
@@ -3198,19 +3394,24 @@ export default function App() {
   const [runningJobs, setRunningJobs] = useState({});
   const manualJobOverride = useRef({}); // brief optimistic UI after start/stop clicks
   const anyJobRunning = Object.values(runningJobs).some(Boolean);
-  const viewingRecorded = !anyJobRunning;
+  /** Jobs actively running on this experiment right now (not archive, not assignment). */
+  const experimentIsLive = anyJobRunning;
   const experimentFullHours = experiment
     ? experimentLookbackHours(experiment)
     : 168;
-  const chartSubtitle = (count, liveJobRunning) => {
+  const chartSubtitle = (count, liveJobRunning, { archive = false } = {}) => {
     if (!count) {
-      return anyJobRunning ? "Waiting for data..." : "No data recorded";
+      return experimentIsLive ? "Waiting for data..." : "No data recorded";
     }
-    const live =
-      anyJobRunning && liveJobRunning && chartLiveMode && !viewingRecorded;
-    return `${count} readings${live ? " · Live" : " · recorded"}`;
+    if (archive || !experimentIsLive) {
+      return `${count} readings · archive`;
+    }
+    if (liveJobRunning && chartLiveMode) {
+      return `${count} readings · live`;
+    }
+    return `${count} readings`;
   };
-  const chartEmptySub = anyJobRunning
+  const chartEmptySub = experimentIsLive
     ? "Waiting for data…"
     : "No data recorded for this experiment.";
 
@@ -3242,6 +3443,7 @@ export default function App() {
   // global defaults). OD and Growth are global on/off toggles.
   const handleStartExperiment = async (globalCfg, perCfg = {}) => {
     if (!experiment) return { success: false, error: "No active experiment" };
+    markExperimentHadJobs();
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const targets = reactors.filter((r) => r.status === "online");
     if (!targets.length)
@@ -3365,9 +3567,10 @@ export default function App() {
   const odP = {
     title: "Optical Density (OD)",
     subtitle: odData.data.length
-      ? `90° scatter · ${chartSubtitle(odData.data.length, runningJobs.od_reading)}`
+      ? `90° scatter · ${chartSubtitle(odData.data.length, runningJobs.od_reading, { archive: !experimentIsLive })}`
       : chartEmptySub.replace("…", "..."),
-    historicalMode: !chartLiveMode || viewingRecorded,
+    // Archive/history pages only — not used on Overview live charts.
+    historicalMode: !chartLiveMode || !experimentIsLive,
     data: odData.data,
     keys: odKeys,
     colors: palette,
@@ -3387,9 +3590,11 @@ export default function App() {
   const tempP = {
     title: "Temperature (°C)",
     subtitle: tempData.data.length
-      ? chartSubtitle(tempData.data.length, runningJobs.temperature_automation)
+      ? chartSubtitle(tempData.data.length, runningJobs.temperature_automation, {
+          archive: !experimentIsLive,
+        })
       : chartEmptySub.replace("…", "..."),
-    historicalMode: !chartLiveMode || viewingRecorded,
+    historicalMode: !chartLiveMode || !experimentIsLive,
     data: tempData.data,
     keys: tempKeys,
     colors: palette,
@@ -3478,9 +3683,10 @@ export default function App() {
       ? chartSubtitle(
           growthData.data.length,
           runningJobs.growth_rate_calculating,
+          { archive: !experimentIsLive },
         )
       : chartEmptySub.replace("…", "..."),
-    historicalMode: !chartLiveMode || viewingRecorded,
+    historicalMode: !chartLiveMode || !experimentIsLive,
     data: growthData.data,
     keys: growthKeys,
     colors: palette,
@@ -3506,14 +3712,26 @@ export default function App() {
   // state instead of a blank plot. The dedicated OD/Temp/Growth pages keep using
   // the unscoped odP/tempP/grP (all reactors).
   const scopeToSelected = (p, keys) => {
-    // Overview is one tank at a time — never dump all experiment series here.
     if (!selectedKey) return { ...p, keys: [], data: [] };
     const sel = keys.filter((k) => k.key === selectedKey);
     return sel.length ? { ...p, keys: sel } : { ...p, keys: [], data: [] };
   };
-  const odPSel = scopeToSelected(odP, odKeys);
-  const tempPSel = scopeToSelected(tempP, tempKeys);
-  const grPSel = scopeToSelected(grP, growthKeys);
+  // Overview = LIVE only (assigned tank, jobs running). Archive = OD/Temp/Growth pages.
+  const showOverviewLiveCharts =
+    experimentIsLive &&
+    selectedReactor?.status === "online" &&
+    !!selectedKey;
+  const toLiveOverviewChart = (p, keys) =>
+    scopeToSelected({ ...p, historicalMode: false }, keys);
+  const odPSel = showOverviewLiveCharts
+    ? toLiveOverviewChart(odP, odKeys)
+    : { ...odP, keys: [], data: [], historicalMode: false };
+  const tempPSel = showOverviewLiveCharts
+    ? toLiveOverviewChart(tempP, tempKeys)
+    : { ...tempP, keys: [], data: [], historicalMode: false };
+  const grPSel = showOverviewLiveCharts
+    ? toLiveOverviewChart(grP, growthKeys)
+    : { ...grP, keys: [], data: [], historicalMode: false };
 
   const CS = ({ icon, title, desc }) => (
     <div
@@ -4615,7 +4833,7 @@ export default function App() {
               ))}
             </div>
 
-            {selectedReactor && selectedReactor.status === "online" && (
+            {showOverviewLiveCharts && (
               <div
                 style={{
                   display: "inline-flex",
@@ -4639,7 +4857,7 @@ export default function App() {
                     color: th.textMuted,
                   }}
                 >
-                  Showing readings for
+                  Live readings for
                 </span>
                 <span
                   style={{
@@ -4652,9 +4870,13 @@ export default function App() {
                 </span>
               </div>
             )}
-            <Chart th={th} {...odPSel} />
-            <Chart th={th} {...tempPSel} />
-            <Chart th={th} {...grPSel} />
+            {showOverviewLiveCharts ? (
+              <>
+                <Chart th={th} {...odPSel} {...chartPlotProps} />
+                <Chart th={th} {...tempPSel} {...chartPlotProps} />
+                <Chart th={th} {...grPSel} {...chartPlotProps} />
+              </>
+            ) : null}
           </div>
         )}
 
@@ -5117,7 +5339,8 @@ export default function App() {
               refresh={refresh}
               experimentFullHours={experimentFullHours}
             />
-            <Chart th={th} {...odP} />
+            <ChartDisplayControls th={th} keys={odKeys} {...chartCtrl} />
+            <Chart th={th} {...odP} {...chartPlotProps} />
           </div>
         )}
         {page === "temp" && (
@@ -5129,7 +5352,8 @@ export default function App() {
               refresh={refresh}
               experimentFullHours={experimentFullHours}
             />
-            <Chart th={th} {...tempP} />
+            <ChartDisplayControls th={th} keys={tempKeys} {...chartCtrl} />
+            <Chart th={th} {...tempP} {...chartPlotProps} />
           </div>
         )}
         {page === "growth" && (
@@ -5141,7 +5365,8 @@ export default function App() {
               refresh={refresh}
               experimentFullHours={experimentFullHours}
             />
-            <Chart th={th} {...grP} />
+            <ChartDisplayControls th={th} keys={growthKeys} {...chartCtrl} />
+            <Chart th={th} {...grP} {...chartPlotProps} />
           </div>
         )}
 
