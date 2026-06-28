@@ -1001,7 +1001,14 @@ const usePioreactorData = () => {
           body: JSON.stringify({ options }),
         },
       );
-      return !!(res && res.ok);
+      const { accepted, data } = await readMutationResponse(res);
+      if (data?.result_url_path) {
+        await pollTaskResult(data.result_url_path, {
+          attempts: 20,
+          delayMs: 500,
+        });
+      }
+      return accepted;
     } catch {
       return false;
     }
@@ -3314,6 +3321,79 @@ export default function App() {
     setStopping((prev) => ({ ...prev, [jobName]: false }));
   };
 
+  const handleApplyTargetTemp = async () => {
+    if (!experiment || !connected) return;
+    const temp = parseFloat(targetTemp);
+    if (!Number.isFinite(temp) || temp < 20 || temp > 50) {
+      showFeedback(
+        "Invalid temperature",
+        "Enter a target between 20°C and 50°C.",
+        "error",
+      );
+      return;
+    }
+    const targets = reactors.filter((r) => r.status === "online");
+    if (!targets.length) {
+      showFeedback(
+        "No assigned bioreactors",
+        "Assign at least one bioreactor to this experiment first.",
+        "error",
+      );
+      return;
+    }
+    const expEnc = encodeURIComponent(experiment.experiment);
+    if (runningJobs.temperature_automation) {
+      await Promise.all(
+        targets.map((r) =>
+          pioFetch(
+            buildApiUrl(
+              `/api/workers/${encodeURIComponent(r.id)}/jobs/update/job_name/temperature_automation/experiments/${expEnc}`,
+            ),
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                settings: { target_temperature: temp },
+              }),
+            },
+          ),
+        ),
+      );
+      showFeedback(
+        "Target updated",
+        `Thermostat target set to ${temp}°C on ${targets.length} bioreactor(s).`,
+        "success",
+      );
+      return;
+    }
+    const results = await Promise.all(
+      targets.map((r) =>
+        startReactorJob(r.id, "temperature_automation", {
+          automation_name: "thermostat",
+          target_temperature: temp,
+        }),
+      ),
+    );
+    if (results.some(Boolean)) {
+      const now = Date.now();
+      manualJobOverride.current.temperature_automation = now;
+      setRunningJobs((prev) => ({ ...prev, temperature_automation: true }));
+      markExperimentHadJobs();
+      refresh();
+      showFeedback(
+        "Temperature automation started",
+        `Thermostat heating to ${temp}°C on ${results.filter(Boolean).length} bioreactor(s). New readings should appear within a minute.`,
+        "success",
+      );
+    } else {
+      showFeedback(
+        "Could not start temperature",
+        "The Pioreactor did not start temperature_automation. Check Logs or try from the native Pioreactor UI.",
+        "error",
+      );
+    }
+  };
+
   // Start the configured experiment: stirring → temperature → OD → growth rate.
   // Each job depends on the previous; small delays let Pioreactor settle.
   // Start the experiment with per-reactor settings. Each online (assigned)
@@ -3488,6 +3568,9 @@ export default function App() {
     emptyTitle: "No temperature data",
     emptySub: chartEmptySub,
     isRunning: !!runningJobs.temperature_automation,
+    onStartAction: () =>
+      handleApplyTargetTemp(),
+    onStopAction: () => handleStopJob("temperature_automation"),
     headerExtra: (
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <label style={{ fontSize: 13, fontWeight: 600, color: th.textMuted }}>
@@ -3514,29 +3597,9 @@ export default function App() {
           }}
         />
         <span style={{ fontSize: 13, color: th.textMuted }}>°C</span>
-        {connected && tempData.data.length > 0 && (
+        {connected && (
           <button
-            onClick={() => {
-              const expEnc = encodeURIComponent(experiment.experiment);
-              reactors
-                .filter((r) => r.status === "online")
-                .forEach((r) => {
-                  pioFetch(
-                    buildApiUrl(
-                      `/api/workers/${encodeURIComponent(r.id)}/jobs/update/job_name/temperature_automation/experiments/${expEnc}`,
-                    ),
-                    {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({
-                        settings: {
-                          target_temperature: parseFloat(targetTemp),
-                        },
-                      }),
-                    },
-                  );
-                });
-            }}
+            onClick={handleApplyTargetTemp}
             style={{
               padding: "5px 10px",
               borderRadius: 6,
@@ -3549,7 +3612,7 @@ export default function App() {
               fontFamily: "inherit",
             }}
           >
-            Set
+            {runningJobs.temperature_automation ? "Set" : "Start"}
           </button>
         )}
       </div>
