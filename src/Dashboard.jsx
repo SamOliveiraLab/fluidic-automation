@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import CalibrationsPage from "./CalibrationsPage";
 import { mergeRawTimeSeries, mergeChartDatasets, downloadCsv, normalizeTimeSeriesRaw } from "./experimentData";
-import { apiGet as workerApiGet } from "./pioreactorApi";
+import { apiGet as workerApiGet, pollTaskResult, apiErrorMessage } from "./pioreactorApi";
 import {
   AreaChart,
   Area,
@@ -318,6 +318,56 @@ const isUnitAssigned = async (unitId, expEnc) => {
   );
 };
 
+const readMutationResponse = async (res) => {
+  let data = null;
+  const text = await res.text();
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = text;
+    }
+  }
+  const accepted = res.ok || res.status === 202;
+  return { accepted, status: res.status, data };
+};
+
+/** Remove one worker from an experiment; waits for async leader tasks. */
+const unassignWorkerFromExperiment = async (unitId, expName) => {
+  const expEnc = encodeURIComponent(expName);
+  let lastError = "The Pioreactor did not record the unassignment.";
+  try {
+    const res = await pioFetch(
+      buildApiUrl(
+        `/api/experiments/${expEnc}/workers/${encodeURIComponent(unitId)}`,
+      ),
+      { method: "DELETE" },
+    );
+    const { accepted, status, data } = await readMutationResponse(res);
+    if (data?.result_url_path) {
+      const taskOk = await pollTaskResult(data.result_url_path, {
+        attempts: 20,
+        delayMs: 500,
+      });
+      if (taskOk == null && !accepted) {
+        lastError = apiErrorMessage(data, status);
+      }
+    } else if (!accepted) {
+      lastError = apiErrorMessage(data, status);
+    }
+  } catch (e) {
+    lastError = e.message || lastError;
+  }
+
+  for (let i = 0; i < 10; i++) {
+    if (!(await isUnitAssigned(unitId, expEnc))) {
+      return { success: true };
+    }
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  return { success: false, error: lastError };
+};
+
 /** Remove every bioreactor from an experiment (frees units for the next run). */
 const unassignAllFromExperiment = async (expName) => {
   const expEnc = encodeURIComponent(expName);
@@ -326,23 +376,19 @@ const unassignAllFromExperiment = async (expName) => {
   );
   if (!units.length) return { success: true, unassigned: 0 };
 
-  await Promise.allSettled(
-    units.map((unitId) =>
-      pioFetch(
-        buildApiUrl(
-          `/api/experiments/${expEnc}/workers/${encodeURIComponent(unitId)}`,
-        ),
-        { method: "DELETE" },
-      ),
-    ),
+  const results = await Promise.allSettled(
+    units.map((unitId) => unassignWorkerFromExperiment(unitId, expName)),
   );
+  const unassigned = results.filter(
+    (r) => r.status === "fulfilled" && r.value?.success,
+  ).length;
 
   const remaining = unitIdsFromWorkerList(
     await api(`/api/experiments/${expEnc}/workers`),
   );
   return {
     success: remaining.length === 0,
-    unassigned: units.length - remaining.length,
+    unassigned,
     total: units.length,
   };
 };
@@ -893,22 +939,20 @@ const usePioreactorData = () => {
   // UI-facing: remove a unit from the active experiment, then refresh.
   const unassignReactor = async (unitId) => {
     if (!experiment) return { success: false, error: "No active experiment" };
-    const expEnc = encodeURIComponent(experiment.experiment);
-    let success = false;
-    try {
-      await pioFetch(
-        buildApiUrl(
-          `/api/experiments/${expEnc}/workers/${encodeURIComponent(unitId)}`,
-        ),
-        { method: "DELETE" },
-      );
-      // Verify by read-back: success means the unit is no longer assigned.
-      success = !(await isUnitAssigned(unitId, expEnc));
-    } catch {}
+    const result = await unassignWorkerFromExperiment(
+      unitId,
+      experiment.experiment,
+    );
+    if (result.success) {
+      unassignGraceUntilRef.current = Date.now() + UNASSIGN_GRACE_MS;
+    }
     setTimeout(fetchAll, 400);
-    return success
+    return result.success
       ? { success: true }
-      : { success: false, error: "Unassign endpoint returned an error." };
+      : {
+          success: false,
+          error: result.error || "Unassign endpoint returned an error.",
+        };
   };
 
   // Start a job on every ASSIGNED + connected bioreactor (status "online").
@@ -2838,6 +2882,16 @@ export default function App() {
   // Disconnected units (registered in the cluster but powered off / unreachable)
   // are hidden from the entire UI — if it's not connected, it's not shown.
   const connectedReactors = reactors.filter((r) => r.status !== "disconnected");
+  const assignedOnlineReactors = connectedReactors.filter(
+    (r) => r.status === "online",
+  );
+  const assignedOnlineIds = assignedOnlineReactors.map((r) => r.id);
+  const assignedOfflineIds = assignedUnits.filter(
+    (id) => !assignedOnlineIds.includes(id),
+  );
+  const disconnectedUnassigned = reactors.filter(
+    (r) => r.status === "disconnected" && !assignedUnits.includes(r.id),
+  );
   const [assigningId, setAssigningId] = useState(null);
   // The Overview shows one reactor's readings at a time; this is the selected one.
   const [selectedReactorId, setSelectedReactorId] = useState(null);
@@ -2896,7 +2950,13 @@ export default function App() {
     setAssigningId(id);
     const res = await unassignReactor(id);
     setAssigningId(null);
-    if (!res.success) {
+    if (res.success) {
+      showFeedback(
+        "Bioreactor unassigned",
+        `${id} was removed from "${experiment.experiment}".`,
+        "success",
+      );
+    } else {
       showFeedback(
         "Could not unassign bioreactor",
         res.error || "The Pioreactor API rejected the request.",
@@ -4184,9 +4244,14 @@ export default function App() {
                 }}
                 title="Pioreactor assigns each unit to one experiment at a time (PUT /api/experiments/{name}/workers)"
               >
-                {assignedUnits.length
-                  ? `Assigned: ${assignedUnits.join(", ")}`
-                  : "No bioreactors assigned. Use Assign on a tank or the Bioreactors page."}
+                {assignedOnlineIds.length
+                  ? `Assigned: ${assignedOnlineIds.join(", ")}`
+                  : assignedOfflineIds.length
+                    ? `No bioreactors online (${assignedOfflineIds.length} assigned but offline)`
+                    : "No bioreactors assigned. Use Assign on a tank or the Bioreactors page."}
+                {assignedOfflineIds.length > 0 && assignedOnlineIds.length > 0
+                  ? ` · offline: ${assignedOfflineIds.join(", ")}`
+                  : ""}
               </span>
               {anyJobRunning ? (
                 <button
@@ -4978,7 +5043,8 @@ export default function App() {
               ))}
             </div>
 
-            {disconnectedCount > 0 && (
+            {(assignedOfflineIds.length > 0 ||
+              disconnectedUnassigned.length > 0) && (
               <div style={{ marginTop: 20 }}>
                 <h3
                   style={{
@@ -4988,7 +5054,8 @@ export default function App() {
                     color: th.textMuted,
                   }}
                 >
-                  Offline / unreachable ({disconnectedCount})
+                  Offline / unreachable (
+                  {assignedOfflineIds.length + disconnectedUnassigned.length})
                 </h3>
                 <p
                   style={{
@@ -4998,38 +5065,94 @@ export default function App() {
                     lineHeight: 1.5,
                   }}
                 >
-                  These units are still in the cluster inventory but did not
-                  respond to a live check. Power them on or fix Wi‑Fi, then
-                  refresh. Assignment is per experiment once they are back.
+                  {assignedOfflineIds.length > 0
+                    ? "Assigned units below are not reachable. Unassign them if you are not using them, or power them on and refresh."
+                    : "These units are in the cluster but did not respond to a live check."}
                 </p>
                 <div
                   style={{ display: "flex", flexDirection: "column", gap: 8 }}
                 >
-                  {reactors
-                    .filter((r) => r.status === "disconnected")
-                    .map((r) => (
+                  {assignedOfflineIds.map((id) => {
+                    const r = reactors.find((x) => x.id === id);
+                    return (
                       <div
-                        key={r.id}
+                        key={id}
                         style={{
                           padding: "12px 16px",
                           borderRadius: 10,
                           border: `1px dashed ${th.border}`,
                           background: th.bgAlt,
-                          fontSize: 15,
-                          color: th.textMuted,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          gap: 12,
+                          flexWrap: "wrap",
                         }}
                       >
-                        {getCultureLabel(r.id) || r.label}{" "}
                         <span
                           style={{
-                            fontFamily: "'JetBrains Mono',monospace",
-                            fontSize: 13,
+                            fontSize: 15,
+                            color: th.textMuted,
                           }}
                         >
-                          ({r.id})
+                          {r
+                            ? getCultureLabel(r.id) || r.label
+                            : id}{" "}
+                          <span
+                            style={{
+                              fontFamily: "'JetBrains Mono',monospace",
+                              fontSize: 13,
+                            }}
+                          >
+                            ({id})
+                          </span>
                         </span>
+                        <button
+                          onClick={() => handleUnassign(id)}
+                          disabled={assigningId === id || !experiment}
+                          style={{
+                            padding: "6px 12px",
+                            borderRadius: 7,
+                            border: `1px solid ${th.border}`,
+                            background: th.surface,
+                            color: th.textSecondary,
+                            fontSize: 14,
+                            fontWeight: 600,
+                            cursor:
+                              assigningId === id || !experiment
+                                ? "not-allowed"
+                                : "pointer",
+                            fontFamily: "inherit",
+                          }}
+                        >
+                          {assigningId === id ? "…" : "Unassign"}
+                        </button>
                       </div>
-                    ))}
+                    );
+                  })}
+                  {disconnectedUnassigned.map((r) => (
+                    <div
+                      key={r.id}
+                      style={{
+                        padding: "12px 16px",
+                        borderRadius: 10,
+                        border: `1px dashed ${th.border}`,
+                        background: th.bgAlt,
+                        fontSize: 15,
+                        color: th.textMuted,
+                      }}
+                    >
+                      {getCultureLabel(r.id) || r.label}{" "}
+                      <span
+                        style={{
+                          fontFamily: "'JetBrains Mono',monospace",
+                          fontSize: 13,
+                        }}
+                      >
+                        ({r.id})
+                      </span>
+                    </div>
+                  ))}
                 </div>
               </div>
             )}
@@ -5182,8 +5305,8 @@ export default function App() {
                       <>
                         {" "}
                         {experimentTableView.rows.length.toLocaleString()} rows
-                        {assignedUnits.length > 0 &&
-                          ` · assigned: ${assignedUnits.join(", ")}`}
+                        {assignedOnlineIds.length > 0 &&
+                          ` · assigned: ${assignedOnlineIds.join(", ")}`}
                       </>
                     )}
                   </p>
