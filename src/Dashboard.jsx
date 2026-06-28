@@ -286,7 +286,6 @@ const EXPERIMENT_JOB_NAMES = new Set([
 const hasExperimentJobsRunning = (jobFlags) =>
   Object.keys(jobFlags || {}).some((name) => EXPERIMENT_JOB_NAMES.has(name));
 
-const UNASSIGN_GRACE_MS = 5 * 60 * 1000;
 const DEFAULT_GAP_BREAK_MS = 15 * 60 * 1000;
 
 const readChartGapBreakMs = () => {
@@ -516,15 +515,6 @@ const usePioreactorData = () => {
   /** From GET /api/workers/{unit}/jobs/running per powered unit. */
   const [runningJobsFromApi, setRunningJobsFromApi] = useState({});
   const [lastFetch, setLastFetch] = useState(null);
-  /** True after experiment jobs were seen running; enables auto-unassign when they all stop. */
-  const experimentHadJobsRef = useRef(false);
-  const prevHadExperimentJobsRef = useRef(false);
-  /** Block stale auto-unassign briefly after assign/start clicks. */
-  const unassignGraceUntilRef = useRef(0);
-  useEffect(() => {
-    experimentHadJobsRef.current = false;
-    prevHadExperimentJobsRef.current = false;
-  }, [selectedExpName]);
 
   // Persist overrides to localStorage so they survive page refresh
   const loadOverrides = () => {
@@ -770,36 +760,6 @@ const usePioreactorData = () => {
       poweredForJobs,
       activeExp.experiment,
     );
-    const hadJobs =
-      hasExperimentJobsRunning(jobFlags) ||
-      hasExperimentJobsRunning(assignedJobFlags);
-    const stoppedThisSession =
-      prevHadExperimentJobsRef.current &&
-      !hadJobs &&
-      experimentHadJobsRef.current;
-    const assignedHasNoJobs =
-      assignedIds.length > 0 && !hasExperimentJobsRunning(assignedJobFlags);
-    const pastGrace = Date.now() > unassignGraceUntilRef.current;
-
-    if (hadJobs) {
-      experimentHadJobsRef.current = true;
-    } else if (
-      assignedSet &&
-      assignedSet.size > 0 &&
-      pastGrace &&
-      assignedHasNoJobs &&
-      stoppedThisSession
-    ) {
-      // Jobs were running this session and all stopped — free bioreactors.
-      // Do NOT use old time-series timestamps here; past experiments keep
-      // historical data and that was incorrectly triggering unassign mid-run.
-      await unassignAllFromExperiment(activeExp.experiment);
-      experimentHadJobsRef.current = false;
-      assignedSet.clear();
-      setAssignedUnits([]);
-      setTimeout(fetchAll, 400);
-    }
-    prevHadExperimentJobsRef.current = hadJobs;
     setRunningJobsFromApi(jobFlags);
 
     // 5. Fetch logs
@@ -920,7 +880,6 @@ const usePioreactorData = () => {
       };
     }
     const success = await assignWorker(unitId, experiment.experiment);
-    if (success) unassignGraceUntilRef.current = Date.now() + UNASSIGN_GRACE_MS;
     setTimeout(fetchAll, 400);
     return success
       ? { success: true }
@@ -937,9 +896,6 @@ const usePioreactorData = () => {
       unitId,
       experiment.experiment,
     );
-    if (result.success) {
-      unassignGraceUntilRef.current = Date.now() + UNASSIGN_GRACE_MS;
-    }
     setTimeout(fetchAll, 400);
     return result.success
       ? { success: true }
@@ -1060,7 +1016,6 @@ const usePioreactorData = () => {
         : reactors.filter((r) => r.status === "online").map((r) => r.id);
     if (!stopTargets.length) {
       const unassignOnly = await unassignAllFromExperiment(expName);
-      experimentHadJobsRef.current = false;
       setTimeout(fetchAll, 400);
       return {
         success: true,
@@ -1119,7 +1074,6 @@ const usePioreactorData = () => {
     }
 
     const unassignRes = await unassignAllFromExperiment(expName);
-    experimentHadJobsRef.current = false;
     setTimeout(fetchAll, 2000);
 
     if (jobsStopped || unassignRes.unassigned > 0) {
@@ -1139,11 +1093,6 @@ const usePioreactorData = () => {
     setSelectedExpName(expName);
     selectedExpRef.current = expName;
     setTimeout(fetchAll, 100);
-  };
-
-  const markExperimentHadJobs = () => {
-    experimentHadJobsRef.current = true;
-    unassignGraceUntilRef.current = Date.now() + UNASSIGN_GRACE_MS;
   };
 
   const createExperiment = async (name, description = "") => {
@@ -1184,7 +1133,6 @@ const usePioreactorData = () => {
     startReactorJob,
     stopJob,
     stopExperiment,
-    markExperimentHadJobs,
     selectExperiment,
     createExperiment,
     assignedUnits,
@@ -2744,7 +2692,6 @@ export default function App() {
     startJob,
     stopJob,
     stopExperiment,
-    markExperimentHadJobs,
     selectExperiment,
     createExperiment,
     startReactorJob,
@@ -3378,7 +3325,6 @@ export default function App() {
       const now = Date.now();
       manualJobOverride.current.temperature_automation = now;
       setRunningJobs((prev) => ({ ...prev, temperature_automation: true }));
-      markExperimentHadJobs();
       refresh();
       showFeedback(
         "Temperature automation started",
@@ -3401,7 +3347,6 @@ export default function App() {
   // global defaults). OD and Growth are global on/off toggles.
   const handleStartExperiment = async (globalCfg, perCfg = {}) => {
     if (!experiment) return { success: false, error: "No active experiment" };
-    markExperimentHadJobs();
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const targets = reactors.filter((r) => r.status === "online");
     if (!targets.length)
@@ -3467,7 +3412,6 @@ export default function App() {
       manualJobOverride.current.growth_rate_calculating = now;
     }
     setRunningJobs((prev) => ({ ...prev, ...nextRunning }));
-    if (steps.some((s) => s.success)) markExperimentHadJobs();
     setTimeout(refresh, 3000);
 
     const failed = steps.filter((s) => !s.success);
