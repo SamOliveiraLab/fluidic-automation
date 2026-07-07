@@ -449,6 +449,8 @@ const PUMP_CALIB_DEVICE = {
   alt_media: "alt_media_pump",
 };
 
+const PUMP_PARAM_DEFAULTS = { volume: "1.0", duration: "60", targetOD: "1.0" };
+
 const pumpHasActiveCal = (unitId, pumpKey, calsByUnit) => {
   const device = PUMP_CALIB_DEVICE[pumpKey];
   if (!device) return false;
@@ -3018,12 +3020,69 @@ export default function App() {
 
   // Pump control state
   const [pumpMode, setPumpMode] = useState("manual"); // manual, chemostat, turbidostat
-  const [pumpVolume, setPumpVolume] = useState("1.0");
-  const [pumpDuration, setPumpDuration] = useState("60");
-  const [pumpTargetOD, setPumpTargetOD] = useState("1.0");
   const [pumpRunning, setPumpRunning] = useState(false);
   const [pumpLog, setPumpLog] = useState([]);
   const [manualPump, setManualPump] = useState("media"); // media, waste, alt_media
+  const [pumpTarget, setPumpTarget] = useState("all"); // "all" or a reactor id
+
+  // Per-target pump parameters (volume / interval / target OD), keyed by
+  // "all" or a reactor id, persisted so each reactor remembers its own settings.
+  const [pumpParams, setPumpParams] = useState(() => {
+    try {
+      const saved = localStorage.getItem("pump_params");
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+  useEffect(() => {
+    localStorage.setItem("pump_params", JSON.stringify(pumpParams));
+  }, [pumpParams]);
+
+  const curPumpParams = {
+    ...PUMP_PARAM_DEFAULTS,
+    ...(pumpParams[pumpTarget] || {}),
+  };
+  const pumpVolume = curPumpParams.volume;
+  const pumpDuration = curPumpParams.duration;
+  const pumpTargetOD = curPumpParams.targetOD;
+  const setPumpParam = (key, val) =>
+    setPumpParams((prev) => ({
+      ...prev,
+      [pumpTarget]: {
+        ...PUMP_PARAM_DEFAULTS,
+        ...(prev[pumpTarget] || {}),
+        [key]: val,
+      },
+    }));
+  const setPumpVolume = (val) => setPumpParam("volume", val);
+  const setPumpDuration = (val) => setPumpParam("duration", val);
+  const setPumpTargetOD = (val) => setPumpParam("targetOD", val);
+
+  // Keep the target valid: fall back to "all" if the picked reactor goes offline.
+  useEffect(() => {
+    if (
+      pumpTarget !== "all" &&
+      !reactors.some((r) => r.id === pumpTarget && r.status === "online")
+    ) {
+      setPumpTarget("all");
+    }
+  }, [reactors, pumpTarget]);
+
+  // Online reactors this page will act on, honoring the target selector.
+  const pumpTargetReactors = useMemo(() => {
+    const online = reactors.filter((r) => r.status === "online");
+    return pumpTarget === "all"
+      ? online
+      : online.filter((r) => r.id === pumpTarget);
+  }, [reactors, pumpTarget]);
+
+  const pumpTargetLabel = () =>
+    pumpTarget === "all"
+      ? "all online reactors"
+      : getCultureLabel(pumpTarget) ||
+        reactors.find((r) => r.id === pumpTarget)?.label ||
+        pumpTarget;
 
   const manualDoseBlock = useMemo(() => {
     if (!connected || !experiment) return "Connect to Pioreactor to dose.";
@@ -3031,7 +3090,14 @@ export default function App() {
     if (!onlineR.length) {
       return "No reactors assigned to this experiment.";
     }
-    const missing = onlineR.filter(
+    const targetR =
+      pumpTarget === "all"
+        ? onlineR
+        : onlineR.filter((r) => r.id === pumpTarget);
+    if (!targetR.length) {
+      return "Selected reactor is offline. Pick another target.";
+    }
+    const missing = targetR.filter(
       (r) => !pumpHasActiveCal(r.id, manualPump, activeCalibrations),
     );
     if (!missing.length) return null;
@@ -3045,6 +3111,7 @@ export default function App() {
     experiment,
     reactors,
     manualPump,
+    pumpTarget,
     activeCalibrations,
     cultureLabels,
   ]);
@@ -3060,10 +3127,12 @@ export default function App() {
       return;
     }
     setPumpRunning(true);
-    addPumpLogEntry(`Manual dose: ${manualPump} pump, ${pumpVolume} mL`);
+    addPumpLogEntry(
+      `Manual dose: ${manualPump} pump, ${pumpVolume} mL → ${pumpTargetLabel()}`,
+    );
     if (experiment && connected) {
       const expEnc = encodeURIComponent(experiment.experiment);
-      const onlineR = reactors.filter((r) => r.status === "online");
+      const onlineR = pumpTargetReactors;
       const jobMap = {
         media: "add_media",
         waste: "remove_waste",
@@ -3110,7 +3179,7 @@ export default function App() {
       }
     } else {
       addPumpLogEntry(
-        `[DEMO] Would dose ${pumpVolume} mL via ${manualPump} pump`,
+        `[DEMO] Would dose ${pumpVolume} mL via ${manualPump} pump → ${pumpTargetLabel()}`,
       );
     }
     setPumpRunning(false);
@@ -3187,12 +3256,19 @@ export default function App() {
       opts.duration = parseFloat(pumpDuration);
     }
     addPumpLogEntry(
-      `Starting ${pumpMode}: vol=${opts.exchange_volume_ml}mL, dur=${opts.duration}min${opts.target_normalized_od ? `, OD=${opts.target_normalized_od}` : ""}`,
+      `Starting ${pumpMode} on ${pumpTargetLabel()}: vol=${opts.exchange_volume_ml}mL, dur=${opts.duration}min${opts.target_normalized_od ? `, OD=${opts.target_normalized_od}` : ""}`,
     );
     if (experiment && connected) {
       await ensureWasteMultiplier();
-      await startJob("dosing_automation", opts);
-      addPumpLogEntry(`${pumpMode} started on all online reactors`);
+      if (pumpTarget === "all") {
+        await startJob("dosing_automation", opts);
+        addPumpLogEntry(`${pumpMode} started on all online reactors`);
+      } else {
+        const ok = await startReactorJob(pumpTarget, "dosing_automation", opts);
+        addPumpLogEntry(
+          `${pumpMode} ${ok ? "started" : "failed to start"} on ${pumpTargetLabel()}`,
+        );
+      }
     } else {
       addPumpLogEntry(`[DEMO] ${pumpMode} would start with these settings`);
     }
@@ -3201,9 +3277,19 @@ export default function App() {
 
   const handleStopDosing = async () => {
     setPumpRunning(true);
-    addPumpLogEntry("Stopping dosing automation...");
+    addPumpLogEntry(`Stopping dosing automation on ${pumpTargetLabel()}...`);
     if (experiment && connected) {
-      await stopJob("dosing_automation");
+      if (pumpTarget === "all") {
+        await stopJob("dosing_automation");
+      } else {
+        const expEnc = encodeURIComponent(experiment.experiment);
+        await pioFetch(
+          buildApiUrl(
+            `/api/workers/${encodeURIComponent(pumpTarget)}/jobs/stop/job_name/dosing_automation/experiments/${expEnc}`,
+          ),
+          { method: "POST" },
+        );
+      }
     }
     addPumpLogEntry("Dosing stopped");
     setPumpRunning(false);
@@ -5505,6 +5591,52 @@ export default function App() {
               ))}
             </div>
 
+            {/* Target reactor selector */}
+            <div style={{ marginBottom: 20 }}>
+              <label
+                style={{
+                  fontSize: 14,
+                  fontWeight: 600,
+                  color: th.textSecondary,
+                  display: "block",
+                  marginBottom: 8,
+                }}
+              >
+                Target reactor
+              </label>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {[
+                  { id: "all", label: "All reactors" },
+                  ...reactors
+                    .filter((r) => r.status === "online")
+                    .map((r) => ({
+                      id: r.id,
+                      label: getCultureLabel(r.id) || r.label || r.id,
+                    })),
+                ].map((opt) => (
+                  <button
+                    key={opt.id}
+                    onClick={() => setPumpTarget(opt.id)}
+                    style={{
+                      padding: "8px 16px",
+                      borderRadius: 8,
+                      border: `1.5px solid ${pumpTarget === opt.id ? th.accent : th.border}`,
+                      background:
+                        pumpTarget === opt.id ? th.accentLight : th.surface,
+                      color:
+                        pumpTarget === opt.id ? th.accent : th.textSecondary,
+                      fontWeight: 600,
+                      fontSize: 14,
+                      cursor: "pointer",
+                      fontFamily: "inherit",
+                    }}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <div
               style={{
                 display: "grid",
@@ -5812,7 +5944,7 @@ export default function App() {
                   }}
                 >
                   {pumpMode === "manual" &&
-                    "Sends a single dose command to all online reactors. Make sure pumps are calibrated first."}
+                    `Sends a single dose command to ${pumpTargetLabel()}. Make sure pumps are calibrated first.`}
                   {pumpMode === "chemostat" &&
                     "Exchanges a fixed volume of media at regular intervals. The culture reaches nutrient equilibrium over time."}
                   {pumpMode === "turbidostat" &&
