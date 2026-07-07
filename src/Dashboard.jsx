@@ -3362,18 +3362,42 @@ export default function App() {
     addPumpLogEntry(`Stopping dosing automation on ${pumpTargetLabel()}...`);
     if (experiment && connected) {
       if (pumpTarget === "all") {
-        await stopJob("dosing_automation");
+        const res = await stopJob("dosing_automation");
+        if (res?.success) {
+          addPumpLogEntry(
+            `Dosing stopped on ${res.stopped ?? 0}/${res.total ?? 0} online reactors`,
+          );
+        } else {
+          addPumpLogEntry(
+            `Failed to stop dosing${res?.error ? `: ${res.error}` : " on all reactors"}`,
+          );
+        }
       } else {
         const expEnc = encodeURIComponent(experiment.experiment);
-        await pioFetch(
-          buildApiUrl(
-            `/api/workers/${encodeURIComponent(pumpTarget)}/jobs/stop/job_name/dosing_automation/experiments/${expEnc}`,
-          ),
-          { method: "POST" },
-        );
+        try {
+          const res = await pioFetch(
+            buildApiUrl(
+              `/api/workers/${encodeURIComponent(pumpTarget)}/jobs/stop/job_name/dosing_automation/experiments/${expEnc}`,
+            ),
+            { method: "POST" },
+          );
+          if (res.ok) {
+            addPumpLogEntry(`Dosing stopped on ${pumpTargetLabel()}`);
+          } else {
+            const text = await res.text();
+            addPumpLogEntry(
+              `Failed to stop dosing on ${pumpTargetLabel()} (HTTP ${res.status})${text ? `: ${text.slice(0, 100)}` : ""}`,
+            );
+          }
+        } catch (e) {
+          addPumpLogEntry(
+            `Failed to stop dosing on ${pumpTargetLabel()}: ${e.message}`,
+          );
+        }
       }
+    } else {
+      addPumpLogEntry("[DEMO] Dosing would stop");
     }
-    addPumpLogEntry("Dosing stopped");
     setPumpRunning(false);
   };
 
