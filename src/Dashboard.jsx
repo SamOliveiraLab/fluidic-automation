@@ -449,7 +449,18 @@ const PUMP_CALIB_DEVICE = {
   alt_media: "alt_media_pump",
 };
 
-const PUMP_PARAM_DEFAULTS = { volume: "1.0", duration: "60", targetOD: "1.0" };
+const PUMP_PARAM_DEFAULTS = {
+  volume: "1.0",
+  duration: "60",
+  targetOD: "1.0",
+  testSec: "5",
+};
+
+const PUMP_JOB_FOR_MANUAL = {
+  media: "add_media",
+  waste: "remove_waste",
+  alt_media: "add_alt_media",
+};
 
 const pumpHasActiveCal = (unitId, pumpKey, calsByUnit) => {
   const device = PUMP_CALIB_DEVICE[pumpKey];
@@ -3046,6 +3057,7 @@ export default function App() {
   const pumpVolume = curPumpParams.volume;
   const pumpDuration = curPumpParams.duration;
   const pumpTargetOD = curPumpParams.targetOD;
+  const pumpTestSec = curPumpParams.testSec;
   const setPumpParam = (key, val) =>
     setPumpParams((prev) => ({
       ...prev,
@@ -3058,23 +3070,36 @@ export default function App() {
   const setPumpVolume = (val) => setPumpParam("volume", val);
   const setPumpDuration = (val) => setPumpParam("duration", val);
   const setPumpTargetOD = (val) => setPumpParam("targetOD", val);
+  const setPumpTestSec = (val) => setPumpParam("testSec", val);
 
-  // Keep the target valid: fall back to "all" if the picked reactor goes offline.
+  // Powered reactors (on + reachable), regardless of experiment assignment.
+  // Pump *testing* works on any of these via Pioreactor's testing experiment.
+  const isPowered = (r) => r.status !== "disconnected" && r.status !== "offline";
+
+  // Keep the target valid: fall back to "all" if the picked reactor powers off.
   useEffect(() => {
     if (
       pumpTarget !== "all" &&
-      !reactors.some((r) => r.id === pumpTarget && r.status === "online")
+      !reactors.some((r) => r.id === pumpTarget && isPowered(r))
     ) {
       setPumpTarget("all");
     }
   }, [reactors, pumpTarget]);
 
-  // Online reactors this page will act on, honoring the target selector.
+  // Online (assigned) reactors this page will dose/automate, honoring target.
   const pumpTargetReactors = useMemo(() => {
     const online = reactors.filter((r) => r.status === "online");
     return pumpTarget === "all"
       ? online
       : online.filter((r) => r.id === pumpTarget);
+  }, [reactors, pumpTarget]);
+
+  // Powered reactors for pump *testing* (assignment not required).
+  const pumpTestReactors = useMemo(() => {
+    const powered = reactors.filter(isPowered);
+    return pumpTarget === "all"
+      ? powered
+      : powered.filter((r) => r.id === pumpTarget);
   }, [reactors, pumpTarget]);
 
   const pumpTargetLabel = () =>
@@ -3083,6 +3108,16 @@ export default function App() {
       : getCultureLabel(pumpTarget) ||
         reactors.find((r) => r.id === pumpTarget)?.label ||
         pumpTarget;
+
+  // Reason a pump test can't run (null = OK). Independent of experiment.
+  const pumpTestBlock = useMemo(() => {
+    if (!connected) return "Connect to Pioreactor to test pumps.";
+    if (!pumpTestReactors.length)
+      return pumpTarget === "all"
+        ? "No powered reactors available."
+        : "Selected reactor is not powered.";
+    return null;
+  }, [connected, pumpTestReactors, pumpTarget]);
 
   const manualDoseBlock = useMemo(() => {
     if (!connected || !experiment) return "Connect to Pioreactor to dose.";
@@ -3120,6 +3155,53 @@ export default function App() {
     setPumpLog((prev) =>
       [{ time: new Date().toLocaleTimeString(), msg }, ...prev].slice(0, 50),
     );
+
+  // Run a pump for a fixed number of seconds to prime/test it. Uses Pioreactor's
+  // built-in testing experiment ($experiment) so it works even when the reactor
+  // is not assigned to the dashboard experiment. No calibration required.
+  const handleTestPump = async () => {
+    if (pumpTestBlock) {
+      addPumpLogEntry(pumpTestBlock);
+      return;
+    }
+    const sec = parseFloat(pumpTestSec);
+    if (!Number.isFinite(sec) || sec <= 0) {
+      addPumpLogEntry("Enter a valid test duration in seconds.");
+      return;
+    }
+    setPumpRunning(true);
+    const jobName = PUMP_JOB_FOR_MANUAL[manualPump] || "add_media";
+    addPumpLogEntry(
+      `Test run: ${manualPump} pump for ${sec}s → ${pumpTargetLabel()}`,
+    );
+    if (connected) {
+      const testExp = encodeURIComponent("$experiment");
+      const results = await Promise.allSettled(
+        pumpTestReactors.map(async (r) => {
+          const url = buildApiUrl(
+            `/api/workers/${encodeURIComponent(r.id)}/jobs/run/job_name/${jobName}/experiments/${testExp}`,
+          );
+          const res = await pioFetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ options: { duration: String(sec) } }),
+          });
+          const text = await res.text();
+          addPumpLogEntry(`${r.id} → ${res.status}: ${text.slice(0, 80)}`);
+          return res;
+        }),
+      );
+      const ok = results.filter(
+        (x) => x.status === "fulfilled" && x.value?.ok,
+      ).length;
+      addPumpLogEntry(`Test done: ${ok}/${pumpTestReactors.length} succeeded`);
+    } else {
+      addPumpLogEntry(
+        `[DEMO] Would run ${manualPump} pump for ${sec}s on ${pumpTargetLabel()}`,
+      );
+    }
+    setPumpRunning(false);
+  };
 
   const handleManualDose = async () => {
     if (manualDoseBlock) {
@@ -5606,18 +5688,25 @@ export default function App() {
               </label>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 {[
-                  { id: "all", label: "All reactors" },
+                  { id: "all", label: "All reactors", assigned: true },
                   ...reactors
-                    .filter((r) => r.status === "online")
+                    .filter(
+                      (r) =>
+                        r.status !== "disconnected" && r.status !== "offline",
+                    )
                     .map((r) => ({
                       id: r.id,
                       label: getCultureLabel(r.id) || r.label || r.id,
+                      assigned: r.status === "online",
                     })),
                 ].map((opt) => (
                   <button
                     key={opt.id}
                     onClick={() => setPumpTarget(opt.id)}
                     style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
                       padding: "8px 16px",
                       borderRadius: 8,
                       border: `1.5px solid ${pumpTarget === opt.id ? th.accent : th.border}`,
@@ -5632,6 +5721,20 @@ export default function App() {
                     }}
                   >
                     {opt.label}
+                    {!opt.assigned && (
+                      <span
+                        style={{
+                          fontSize: 11,
+                          fontWeight: 600,
+                          padding: "1px 6px",
+                          borderRadius: 6,
+                          background: th.bgAlt,
+                          color: th.textMuted,
+                        }}
+                      >
+                        test only
+                      </span>
+                    )}
                   </button>
                 ))}
               </div>
@@ -5790,6 +5893,82 @@ export default function App() {
                         </button>
                       </p>
                     )}
+
+                    {/* Test / prime run — no calibration or assignment needed */}
+                    <div
+                      style={{
+                        marginTop: 20,
+                        paddingTop: 18,
+                        borderTop: `1px dashed ${th.border}`,
+                      }}
+                    >
+                      <label
+                        style={{
+                          fontSize: 14,
+                          fontWeight: 600,
+                          color: th.textSecondary,
+                          display: "block",
+                          marginBottom: 6,
+                        }}
+                      >
+                        Test / prime run (seconds)
+                      </label>
+                      <div style={{ display: "flex", gap: 10 }}>
+                        <input
+                          value={pumpTestSec}
+                          onChange={(e) => setPumpTestSec(e.target.value)}
+                          type="number"
+                          step="1"
+                          min="1"
+                          style={{
+                            flex: 1,
+                            padding: "10px 14px",
+                            borderRadius: 8,
+                            border: `1px solid ${th.border}`,
+                            background: th.bgAlt,
+                            color: th.text,
+                            fontSize: 16,
+                            fontFamily: "'JetBrains Mono',monospace",
+                            outline: "none",
+                          }}
+                        />
+                        <button
+                          onClick={handleTestPump}
+                          disabled={pumpRunning || !!pumpTestBlock}
+                          title={pumpTestBlock || ""}
+                          style={{
+                            padding: "10px 18px",
+                            borderRadius: 10,
+                            border: `1.5px solid ${pumpTestBlock ? th.border : th.accent}`,
+                            background: "transparent",
+                            color: pumpTestBlock ? th.textMuted : th.accent,
+                            fontWeight: 700,
+                            fontSize: 15,
+                            cursor:
+                              pumpRunning || pumpTestBlock
+                                ? "not-allowed"
+                                : "pointer",
+                            fontFamily: "inherit",
+                            whiteSpace: "nowrap",
+                            opacity: pumpTestBlock ? 0.75 : 1,
+                          }}
+                        >
+                          {pumpRunning ? "Running..." : `Test run ${pumpTestSec}s`}
+                        </button>
+                      </div>
+                      <p
+                        style={{
+                          margin: "10px 0 0",
+                          fontSize: 13,
+                          color: th.textMuted,
+                          lineHeight: 1.6,
+                        }}
+                      >
+                        {pumpTestBlock
+                          ? pumpTestBlock
+                          : "Runs the pump for a fixed time to prime tubing or verify flow. Works on unassigned reactors and needs no calibration."}
+                      </p>
+                    </div>
                   </div>
                 )}
 
