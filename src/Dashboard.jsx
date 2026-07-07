@@ -3102,9 +3102,9 @@ export default function App() {
       : powered.filter((r) => r.id === pumpTarget);
   }, [reactors, pumpTarget]);
 
-  const pumpTargetLabel = () =>
+  const pumpTargetLabel = (allLabel = "all online reactors") =>
     pumpTarget === "all"
-      ? "all online reactors"
+      ? allLabel
       : getCultureLabel(pumpTarget) ||
         reactors.find((r) => r.id === pumpTarget)?.label ||
         pumpTarget;
@@ -3172,7 +3172,7 @@ export default function App() {
     setPumpRunning(true);
     const jobName = PUMP_JOB_FOR_MANUAL[manualPump] || "add_media";
     addPumpLogEntry(
-      `Test run: ${manualPump} pump for ${sec}s → ${pumpTargetLabel()}`,
+      `Test run: ${manualPump} pump for ${sec}s → ${pumpTargetLabel("all powered reactors")}`,
     );
     if (connected) {
       const testExp = encodeURIComponent("$experiment");
@@ -3197,7 +3197,7 @@ export default function App() {
       addPumpLogEntry(`Test done: ${ok}/${pumpTestReactors.length} succeeded`);
     } else {
       addPumpLogEntry(
-        `[DEMO] Would run ${manualPump} pump for ${sec}s on ${pumpTargetLabel()}`,
+        `[DEMO] Would run ${manualPump} pump for ${sec}s on ${pumpTargetLabel("all powered reactors")}`,
       );
     }
     setPumpRunning(false);
