@@ -459,6 +459,13 @@ const fetchRunningJobsForUnits = async (unitIds, experimentName) => {
   return flags;
 };
 
+const isJobRunningOnUnit = (flags, jobName) => {
+  if (!flags) return false;
+  if (flags[jobName]) return true;
+  if (jobName === "dosing_automation" && flags.dosing_control) return true;
+  return false;
+};
+
 const PUMP_CALIB_DEVICE = {
   media: "media_pump",
   waste: "waste_pump",
@@ -999,8 +1006,10 @@ const usePioreactorData = () => {
   // Start a single job on ONE specific worker with its own options. Used to give
   // each reactor different settings (e.g. temperature/RPM) at experiment start.
   const startReactorJob = async (unitId, jobName, options = {}) => {
-    if (!experiment) return false;
+    if (!experiment)
+      return { success: false, error: "No active experiment" };
     const expEnc = encodeURIComponent(experiment.experiment);
+    let lastError = "The Pioreactor did not start the job.";
     try {
       const res = await pioFetch(
         buildApiUrl(
@@ -1012,23 +1021,34 @@ const usePioreactorData = () => {
           body: JSON.stringify({ options }),
         },
       );
-      const { accepted, data } = await readMutationResponse(res);
+      const { accepted, status, data } = await readMutationResponse(res);
+      if (!accepted) {
+        return {
+          success: false,
+          error: apiErrorMessage(data, status),
+        };
+      }
       if (data?.result_url_path) {
-        await pollTaskResult(data.result_url_path, {
+        const taskOk = await pollTaskResult(data.result_url_path, {
           attempts: 20,
           delayMs: 500,
         });
+        if (taskOk == null) {
+          lastError =
+            "The Pioreactor accepted the request but the job task failed. Check unit logs for calibration or pump errors.";
+        }
       }
-      if (!accepted) return false;
-      // HTTP 202/200 is not enough — stirring often logs "Disconnected" immediately.
       await new Promise((r) => setTimeout(r, 2000));
       const flags = await fetchRunningJobsForUnits(
         [unitId],
         experiment.experiment,
       );
-      return !!flags[jobName];
-    } catch {
-      return false;
+      if (isJobRunningOnUnit(flags, jobName)) {
+        return { success: true };
+      }
+      return { success: false, error: lastError };
+    } catch (e) {
+      return { success: false, error: e.message || lastError };
     }
   };
 
@@ -3210,6 +3230,33 @@ export default function App() {
     cultureLabels,
   ]);
 
+  const dosingAutomationBlock = useMemo(() => {
+    if (!connected || !experiment)
+      return "Connect to Pioreactor and select an experiment.";
+    if (!pumpTargetReactors.length) {
+      return pumpTarget === "all"
+        ? "No reactors assigned to this experiment."
+        : "Selected reactor is not assigned to this experiment.";
+    }
+    const missing = pumpTargetReactors.filter(
+      (r) =>
+        !pumpHasActiveCal(r.id, "media", activeCalibrations) ||
+        !pumpHasActiveCal(r.id, "waste", activeCalibrations),
+    );
+    if (!missing.length) return null;
+    const names = missing
+      .map((r) => getCultureLabel(r.id) || r.label || r.id)
+      .join(", ");
+    return `Media and waste pump calibrations required on ${names}. Calibrate both pumps on the Calibrations tab first.`;
+  }, [
+    connected,
+    experiment,
+    pumpTargetReactors,
+    pumpTarget,
+    activeCalibrations,
+    cultureLabels,
+  ]);
+
   const addPumpLogEntry = (msg) =>
     setPumpLog((prev) =>
       [{ time: new Date().toLocaleTimeString(), msg }, ...prev].slice(0, 50),
@@ -3384,36 +3431,73 @@ export default function App() {
   };
 
   const handleStartDosing = async () => {
+    if (dosingAutomationBlock) {
+      addPumpLogEntry(dosingAutomationBlock);
+      return;
+    }
     setPumpRunning(true);
+    const vol = parseFloat(pumpVolume);
+    const dur = parseFloat(pumpDuration);
+    if (!Number.isFinite(vol) || vol <= 0) {
+      addPumpLogEntry("Enter a valid exchange volume in mL.");
+      setPumpRunning(false);
+      return;
+    }
     const opts = {};
     if (pumpMode === "chemostat") {
+      if (!Number.isFinite(dur) || dur <= 0) {
+        addPumpLogEntry("Enter a valid interval in minutes.");
+        setPumpRunning(false);
+        return;
+      }
       opts.automation_name = "chemostat";
-      opts.exchange_volume_ml = parseFloat(pumpVolume);
-      opts.duration = parseFloat(pumpDuration);
+      opts.exchange_volume_ml = vol;
+      opts.duration = dur;
     } else if (pumpMode === "turbidostat") {
+      const target = parseFloat(pumpTargetOD);
+      if (!Number.isFinite(target) || target <= 0) {
+        addPumpLogEntry("Enter a valid target biomass (OD).");
+        setPumpRunning(false);
+        return;
+      }
       opts.automation_name = "turbidostat";
-      opts.target_normalized_od = parseFloat(pumpTargetOD);
-      opts.exchange_volume_ml = parseFloat(pumpVolume);
-      opts.duration = parseFloat(pumpDuration);
+      opts.exchange_volume_ml = vol;
+      opts.target_biomass = target;
+      opts.biomass_signal = "auto";
     }
+    const logDur =
+      pumpMode === "chemostat" ? `, dur=${opts.duration}min` : "";
+    const logTarget =
+      pumpMode === "turbidostat" ? `, target=${opts.target_biomass}` : "";
     addPumpLogEntry(
-      `Starting ${pumpMode} on ${pumpTargetLabel()}: vol=${opts.exchange_volume_ml}mL, dur=${opts.duration}min${opts.target_normalized_od ? `, OD=${opts.target_normalized_od}` : ""}`,
+      `Starting ${pumpMode} on ${pumpTargetLabel()}: vol=${opts.exchange_volume_ml}mL${logDur}${logTarget}`,
     );
     if (experiment && connected) {
       await ensureWasteMultiplier();
-      if (pumpTarget === "all") {
-        await startJob("dosing_automation", opts);
-        addPumpLogEntry(`${pumpMode} started on all online reactors`);
-      } else {
-        const ok = await startReactorJob(pumpTarget, "dosing_automation", opts);
+      const targets = pumpTargetReactors;
+      const results = await Promise.all(
+        targets.map(async (r) => {
+          const label = getCultureLabel(r.id) || r.label || r.id;
+          const result = await startReactorJob(
+            r.id,
+            "dosing_automation",
+            opts,
+          );
+          return { label, ...result };
+        }),
+      );
+      for (const r of results) {
         addPumpLogEntry(
-          `${pumpMode} ${ok ? "started" : "failed to start"} on ${pumpTargetLabel()}`,
+          r.success
+            ? `${pumpMode} started on ${r.label}`
+            : `${pumpMode} failed on ${r.label}: ${r.error}`,
         );
       }
     } else {
       addPumpLogEntry(`[DEMO] ${pumpMode} would start with these settings`);
     }
     setPumpRunning(false);
+    setTimeout(refresh, 3000);
   };
 
   const handleStopDosing = async () => {
@@ -3579,7 +3663,7 @@ export default function App() {
         }),
       ),
     );
-    if (results.some(Boolean)) {
+    if (results.some((r) => r.success)) {
       const now = Date.now();
       manualJobOverride.current.temperature_automation = now;
       setRunningJobs((prev) => ({ ...prev, temperature_automation: true }));
@@ -3598,7 +3682,7 @@ export default function App() {
       refresh();
       showFeedback(
         "Temperature automation started",
-        `Thermostat heating to ${temp}°C on ${results.filter(Boolean).length} bioreactor(s). New readings should appear within a minute.`,
+        `Thermostat heating to ${temp}°C on ${results.filter((r) => r.success).length} bioreactor(s). New readings should appear within a minute.`,
         "success",
       );
     } else {
@@ -3634,7 +3718,7 @@ export default function App() {
 
     // Stirring (per reactor) — abort if stir motor does not connect
     for (const r of targets) {
-      const ok = await startReactorJob(r.id, "stirring", {
+      const { success: ok } = await startReactorJob(r.id, "stirring", {
         target_rpm: String(settingsFor(r).rpm),
       });
       steps.push({ name: `${labelOf(r)} · stirring`, success: ok });
@@ -3650,24 +3734,32 @@ export default function App() {
 
     // Temperature thermostat (per reactor)
     for (const r of targets) {
-      const ok = await startReactorJob(r.id, "temperature_automation", {
-        automation_name: "thermostat",
-        target_temperature: settingsFor(r).temp,
-      });
+      const { success: ok } = await startReactorJob(
+        r.id,
+        "temperature_automation",
+        {
+          automation_name: "thermostat",
+          target_temperature: settingsFor(r).temp,
+        },
+      );
       steps.push({ name: `${labelOf(r)} · temperature`, success: ok });
     }
     await sleep(1500);
 
     if (globalCfg.od) {
       for (const r of targets) {
-        const ok = await startReactorJob(r.id, "od_reading", {});
+        const { success: ok } = await startReactorJob(r.id, "od_reading", {});
         steps.push({ name: `${labelOf(r)} · OD`, success: ok });
       }
       await sleep(1500);
     }
     if (globalCfg.growth) {
       for (const r of targets) {
-        const ok = await startReactorJob(r.id, "growth_rate_calculating", {});
+        const { success: ok } = await startReactorJob(
+          r.id,
+          "growth_rate_calculating",
+          {},
+        );
         steps.push({ name: `${labelOf(r)} · growth`, success: ok });
       }
     }
@@ -6182,40 +6274,45 @@ export default function App() {
                         marginBottom: 14,
                       }}
                     />
-                    <label
-                      style={{
-                        fontSize: 14,
-                        fontWeight: 600,
-                        color: th.textSecondary,
-                        display: "block",
-                        marginBottom: 6,
-                      }}
-                    >
-                      Interval (minutes)
-                    </label>
-                    <input
-                      value={pumpDuration}
-                      onChange={(e) => setPumpDuration(e.target.value)}
-                      type="number"
-                      step="1"
-                      min="1"
-                      style={{
-                        width: "100%",
-                        padding: "10px 14px",
-                        borderRadius: 8,
-                        border: `1px solid ${th.border}`,
-                        background: th.bgAlt,
-                        color: th.text,
-                        fontSize: 16,
-                        fontFamily: "'JetBrains Mono',monospace",
-                        outline: "none",
-                        marginBottom: 18,
-                      }}
-                    />
+                    {pumpMode === "chemostat" && (
+                      <>
+                        <label
+                          style={{
+                            fontSize: 14,
+                            fontWeight: 600,
+                            color: th.textSecondary,
+                            display: "block",
+                            marginBottom: 6,
+                          }}
+                        >
+                          Interval (minutes)
+                        </label>
+                        <input
+                          value={pumpDuration}
+                          onChange={(e) => setPumpDuration(e.target.value)}
+                          type="number"
+                          step="1"
+                          min="1"
+                          style={{
+                            width: "100%",
+                            padding: "10px 14px",
+                            borderRadius: 8,
+                            border: `1px solid ${th.border}`,
+                            background: th.bgAlt,
+                            color: th.text,
+                            fontSize: 16,
+                            fontFamily: "'JetBrains Mono',monospace",
+                            outline: "none",
+                            marginBottom: 18,
+                          }}
+                        />
+                      </>
+                    )}
                     <div style={{ display: "flex", gap: 10 }}>
                       <button
                         onClick={handleStartDosing}
-                        disabled={pumpRunning}
+                        disabled={pumpRunning || !!dosingAutomationBlock}
+                        title={dosingAutomationBlock || ""}
                         style={{
                           flex: 1,
                           padding: "12px",
@@ -6225,9 +6322,13 @@ export default function App() {
                           color: "#fff",
                           fontWeight: 700,
                           fontSize: 16,
-                          cursor: "pointer",
+                          cursor:
+                            pumpRunning || dosingAutomationBlock
+                              ? "not-allowed"
+                              : "pointer",
                           fontFamily: "inherit",
-                          opacity: pumpRunning ? 0.6 : 1,
+                          opacity:
+                            pumpRunning || dosingAutomationBlock ? 0.6 : 1,
                         }}
                       >
                         {pumpRunning ? "Starting..." : `Start ${pumpMode}`}
@@ -6266,12 +6367,19 @@ export default function App() {
                     lineHeight: 1.6,
                   }}
                 >
-                  {pumpMode === "manual" &&
-                    `Sends a single dose command to ${pumpTargetLabel()}. Make sure pumps are calibrated first.`}
-                  {pumpMode === "chemostat" &&
-                    "Exchanges a fixed volume of media at regular intervals. The culture reaches nutrient equilibrium over time."}
-                  {pumpMode === "turbidostat" &&
-                    "Monitors OD and dilutes when the target is exceeded, keeping cell density constant. Great for heterogeneity studies."}
+                  {dosingAutomationBlock &&
+                  (pumpMode === "chemostat" || pumpMode === "turbidostat") ? (
+                    <span style={{ color: th.warning }}>{dosingAutomationBlock}</span>
+                  ) : (
+                    <>
+                      {pumpMode === "manual" &&
+                        `Sends a single dose command to ${pumpTargetLabel()}. Make sure pumps are calibrated first.`}
+                      {pumpMode === "chemostat" &&
+                        "Exchanges a fixed volume of media at regular intervals. Requires active media and waste pump calibrations on each target reactor."}
+                      {pumpMode === "turbidostat" &&
+                        "Monitors biomass and dilutes when the target is exceeded. Requires media and waste calibrations plus OD reading running."}
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -6413,8 +6521,8 @@ export default function App() {
                 lineHeight: 1.7,
               }}
             >
-              Manual dosing is disabled until each target reactor has an active
-              pump calibration. Run calibration on the{" "}
+              Manual dosing and chemostat/turbidostat require active pump
+              calibrations on each target reactor. Run calibration on the{" "}
               <button
                 type="button"
                 onClick={() => setPage("calibrations")}
