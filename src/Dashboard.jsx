@@ -1,7 +1,16 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import CalibrationsPage from "./CalibrationsPage";
-import { mergeRawTimeSeries, mergeChartDatasets, downloadCsv, normalizeTimeSeriesRaw } from "./experimentData";
-import { apiGet as workerApiGet, pollTaskResult, apiErrorMessage } from "./pioreactorApi";
+import {
+  mergeRawTimeSeries,
+  mergeChartDatasets,
+  downloadCsv,
+  normalizeTimeSeriesRaw,
+} from "./experimentData";
+import {
+  apiGet as workerApiGet,
+  pollTaskResult,
+  apiErrorMessage,
+} from "./pioreactorApi";
 import {
   AreaChart,
   Area,
@@ -71,7 +80,11 @@ const api = async (path) => {
 // Transform Pioreactor time_series response → chart-friendly format
 // API returns: { series: ["unit1-ch","unit2-ch"], data: [[{x,y},...],[{x,y},...]] }
 // We need:    [{ t:"HH:MM", r01: value, r02: value }, ...]
-const transformTimeSeries = (raw, workers, { maxPoints = 300, gapBreakMs } = {}) => {
+const transformTimeSeries = (
+  raw,
+  workers,
+  { maxPoints = 300, gapBreakMs } = {},
+) => {
   const norm = normalizeTimeSeriesRaw(raw);
   if (!norm?.series?.length || !norm?.data?.length)
     return { data: [], keys: [], latestByKey: {} };
@@ -395,12 +408,13 @@ const unassignAllFromExperiment = async (expName) => {
 /** Normalize GET /api/workers/{unit}/jobs/running (unit_api job metadata rows). */
 const parseRunningJobs = (jobs, experimentName) => {
   if (!Array.isArray(jobs)) return [];
-  return jobs.filter(
-    (j) =>
-      j?.is_running &&
-      j?.job_name &&
-      (!experimentName || !j.experiment || j.experiment === experimentName),
-  );
+  return jobs.filter((j) => {
+    if (!j?.is_running || !j?.job_name) return false;
+    if (!experimentName) return true;
+    // Require an explicit experiment match — jobs with a missing experiment field
+    // belong to other contexts and must not block a new experiment run.
+    return j.experiment === experimentName;
+  });
 };
 
 /**
@@ -522,7 +536,10 @@ const usePioreactorData = () => {
     latestByKey: {},
   });
   /** Full-resolution merged OD/temp/growth rows for the selected experiment (export table). */
-  const [experimentTable, setExperimentTable] = useState({ rows: [], columns: [] });
+  const [experimentTable, setExperimentTable] = useState({
+    rows: [],
+    columns: [],
+  });
   const [logs, setLogs] = useState([]);
   const [fetchError, setFetchError] = useState(null);
   /** From GET /api/workers/{unit}/jobs/running per powered unit. */
@@ -634,15 +651,11 @@ const usePioreactorData = () => {
       tsQuery = `?target_points=3000&lookback=${hours}`;
     }
     const [odRaw, tempRaw, growthRaw] = await Promise.all([
-      api(
-        `/api/experiments/${expName}/time_series/od_readings${tsQuery}`,
-      ),
+      api(`/api/experiments/${expName}/time_series/od_readings${tsQuery}`),
       api(
         `/api/experiments/${expName}/time_series/temperature_readings${tsQuery}`,
       ),
-      api(
-        `/api/experiments/${expName}/time_series/growth_rates${tsQuery}`,
-      ),
+      api(`/api/experiments/${expName}/time_series/growth_rates${tsQuery}`),
     ]);
 
     setOdData(
@@ -723,10 +736,15 @@ const usePioreactorData = () => {
         const isConnected =
           connectedSet.has(r.id) || (i > 0 && workerHasData(i));
         const globalExp = workerAssignmentMap[r.id] || null;
-        const base = { ...r, assignedExperiment: globalExp, connected: isConnected };
+        const base = {
+          ...r,
+          assignedExperiment: globalExp,
+          connected: isConnected,
+        };
 
         if (r.status === "offline") return base;
-        if (!isConnected) return { ...base, status: "disconnected", connected: false };
+        if (!isConnected)
+          return { ...base, status: "disconnected", connected: false };
 
         if (globalExp && globalExp !== currentExpName) {
           return { ...base, status: "assigned_elsewhere", connected: true };
@@ -867,17 +885,34 @@ const usePioreactorData = () => {
   // the server records the change) — instead we verify by reading the list back.
   const assignWorker = async (unitId, expName) => {
     const expEnc = encodeURIComponent(expName);
+    let lastError = "The Pioreactor did not record the assignment.";
     try {
-      await pioFetch(buildApiUrl(`/api/experiments/${expEnc}/workers`), {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pioreactor_unit: unitId }),
-      });
-    } catch {}
-    // Verify (with one retry) that the assignment actually took effect.
-    for (let i = 0; i < 2; i++) {
+      const res = await pioFetch(
+        buildApiUrl(`/api/experiments/${expEnc}/workers`),
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pioreactor_unit: unitId }),
+        },
+      );
+      const { accepted, status, data } = await readMutationResponse(res);
+      if (data?.result_url_path) {
+        const taskOk = await pollTaskResult(data.result_url_path, {
+          attempts: 20,
+          delayMs: 500,
+        });
+        if (taskOk == null && !accepted) {
+          lastError = apiErrorMessage(data, status);
+        }
+      } else if (!accepted) {
+        lastError = apiErrorMessage(data, status);
+      }
+    } catch (e) {
+      lastError = e.message || lastError;
+    }
+    for (let i = 0; i < 10; i++) {
       if (await isUnitAssigned(unitId, expEnc)) return true;
-      await new Promise((r) => setTimeout(r, 300));
+      await new Promise((r) => setTimeout(r, 400));
     }
     return false;
   };
@@ -887,10 +922,15 @@ const usePioreactorData = () => {
     if (!experiment) return { success: false, error: "No active experiment" };
     const otherExp = workerAssignmentsRef.current[unitId];
     if (otherExp && otherExp !== experiment.experiment) {
-      return {
-        success: false,
-        error: `${unitId} is already on experiment "${otherExp}". Open that experiment and unassign it first.`,
-      };
+      const moved = await unassignWorkerFromExperiment(unitId, otherExp);
+      if (!moved.success) {
+        return {
+          success: false,
+          error:
+            moved.error ||
+            `Could not move ${unitId} from "${otherExp}" to "${experiment.experiment}".`,
+        };
+      }
     }
     const success = await assignWorker(unitId, experiment.experiment);
     setTimeout(fetchAll, 400);
@@ -1090,7 +1130,9 @@ const usePioreactorData = () => {
           ),
         ),
       );
-      jobsStopped = results.some((r) => r.status === "fulfilled" && r.value?.ok);
+      jobsStopped = results.some(
+        (r) => r.status === "fulfilled" && r.value?.ok,
+      );
     }
 
     const unassignRes = await unassignAllFromExperiment(expName);
@@ -2831,8 +2873,29 @@ export default function App() {
     (r) => r.status === "disconnected" && !assignedUnits.includes(r.id),
   );
   const assignableReactors = connectedReactors.filter(
-    (r) => r.status === "unassigned",
+    (r) => r.status === "unassigned" || r.status === "assigned_elsewhere",
   );
+  const [reactorSetpoints, setReactorSetpoints] = useState(() => {
+    try {
+      return JSON.parse(
+        localStorage.getItem("pioreactor_reactor_setpoints") || "{}",
+      );
+    } catch {
+      return {};
+    }
+  });
+  const saveReactorSetpoints = (expName, setpoints) => {
+    setReactorSetpoints((prev) => {
+      const next = { ...prev, [expName]: setpoints };
+      try {
+        localStorage.setItem(
+          "pioreactor_reactor_setpoints",
+          JSON.stringify(next),
+        );
+      } catch {}
+      return next;
+    });
+  };
   const openStartFlow = () => {
     if (!experiment) return;
     if (assignedOnlineIds.length === 0) {
@@ -2881,7 +2944,9 @@ export default function App() {
   // Auto-select an assigned reactor for Overview charts. Do not default to an
   // unassigned unit (e.g. leader with live monitor but not in this experiment).
   useEffect(() => {
-    const assignedOnline = connectedReactors.filter((r) => r.status === "online");
+    const assignedOnline = connectedReactors.filter(
+      (r) => r.status === "online",
+    );
     const stillValid =
       selectedReactorId &&
       assignedOnline.some((r) => r.id === selectedReactorId);
@@ -2896,15 +2961,6 @@ export default function App() {
       showFeedback(
         "No experiment selected",
         "Pick or create an experiment before assigning bioreactors.",
-        "error",
-      );
-      return;
-    }
-    const otherExp = workerAssignments[id];
-    if (otherExp && otherExp !== experiment.experiment) {
-      showFeedback(
-        "Already on another experiment",
-        `${id} is assigned to "${otherExp}". Switch to that experiment and unassign it there first.`,
         "error",
       );
       return;
@@ -3074,7 +3130,8 @@ export default function App() {
 
   // Powered reactors (on + reachable), regardless of experiment assignment.
   // Pump *testing* works on any of these via Pioreactor's testing experiment.
-  const isPowered = (r) => r.status !== "disconnected" && r.status !== "offline";
+  const isPowered = (r) =>
+    r.status !== "disconnected" && r.status !== "offline";
 
   // Keep the target valid: fall back to "all" if the picked reactor powers off.
   useEffect(() => {
@@ -3524,6 +3581,18 @@ export default function App() {
       const now = Date.now();
       manualJobOverride.current.temperature_automation = now;
       setRunningJobs((prev) => ({ ...prev, temperature_automation: true }));
+      const expKey = experiment.experiment;
+      const nextSetpoints = {
+        ...(reactorSetpoints[expKey] || {}),
+      };
+      targets.forEach((r) => {
+        nextSetpoints[r.id] = {
+          ...(nextSetpoints[r.id] || {}),
+          temp,
+          rpm: nextSetpoints[r.id]?.rpm ?? (parseInt(targetRpm) || 400),
+        };
+      });
+      saveReactorSetpoints(expKey, nextSetpoints);
       refresh();
       showFeedback(
         "Temperature automation started",
@@ -3618,6 +3687,13 @@ export default function App() {
       manualJobOverride.current.growth_rate_calculating = now;
     }
     setRunningJobs((prev) => ({ ...prev, ...nextRunning }));
+    const setpoints = {};
+    for (const r of targets) {
+      setpoints[r.id] = settingsFor(r);
+    }
+    saveReactorSetpoints(experiment.experiment, setpoints);
+    setTargetRpm(String(globalCfg.rpm));
+    setTargetTemp(String(globalCfg.temp));
     setTimeout(refresh, 3000);
 
     const failed = steps.filter((s) => !s.success);
@@ -3698,9 +3774,13 @@ export default function App() {
   const tempP = {
     title: "Temperature (°C)",
     subtitle: tempData.data.length
-      ? chartSubtitle(tempData.data.length, runningJobs.temperature_automation, {
-          archive: !experimentIsLive,
-        })
+      ? chartSubtitle(
+          tempData.data.length,
+          runningJobs.temperature_automation,
+          {
+            archive: !experimentIsLive,
+          },
+        )
       : chartEmptySub.replace("…", "..."),
     historicalMode: !chartLiveMode || !experimentIsLive,
     data: tempData.data,
@@ -3718,8 +3798,7 @@ export default function App() {
     emptyTitle: "No temperature data",
     emptySub: chartEmptySub,
     isRunning: !!runningJobs.temperature_automation,
-    onStartAction: () =>
-      handleApplyTargetTemp(),
+    onStartAction: () => handleApplyTargetTemp(),
     onStopAction: () => handleStopJob("temperature_automation"),
     headerExtra: (
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -3809,9 +3888,7 @@ export default function App() {
   };
   // Overview = LIVE only (assigned tank, jobs running). Archive = OD/Temp/Growth pages.
   const showOverviewLiveCharts =
-    experimentIsLive &&
-    selectedReactor?.status === "online" &&
-    !!selectedKey;
+    experimentIsLive && selectedReactor?.status === "online" && !!selectedKey;
   const toLiveOverviewChart = (p, keys) =>
     scopeToSelected({ ...p, historicalMode: false }, keys);
   const odPSel = showOverviewLiveCharts
@@ -4682,25 +4759,51 @@ export default function App() {
                       >
                         {r.assignedExperiment}
                       </span>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          selectExperiment(r.assignedExperiment);
-                        }}
-                        style={{
-                          padding: "6px 14px",
-                          borderRadius: 8,
-                          border: `1px solid ${th.border}`,
-                          background: th.surface,
-                          color: th.textSecondary,
-                          fontSize: 13,
-                          fontWeight: 600,
-                          fontFamily: "inherit",
-                          cursor: "pointer",
-                        }}
-                      >
-                        Open that experiment
-                      </button>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleAssign(r.id);
+                          }}
+                          disabled={assigningId === r.id || !experiment}
+                          style={{
+                            padding: "6px 14px",
+                            borderRadius: 8,
+                            border: "none",
+                            background: th.accent,
+                            color: "#fff",
+                            fontSize: 13,
+                            fontWeight: 700,
+                            fontFamily: "inherit",
+                            cursor:
+                              assigningId === r.id || !experiment
+                                ? "not-allowed"
+                                : "pointer",
+                            opacity: assigningId === r.id ? 0.6 : 1,
+                          }}
+                        >
+                          {assigningId === r.id ? "Moving…" : "Move here"}
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            selectExperiment(r.assignedExperiment);
+                          }}
+                          style={{
+                            padding: "6px 14px",
+                            borderRadius: 8,
+                            border: `1px solid ${th.border}`,
+                            background: th.surface,
+                            color: th.textSecondary,
+                            fontSize: 13,
+                            fontWeight: 600,
+                            fontFamily: "inherit",
+                            cursor: "pointer",
+                          }}
+                        >
+                          Open that experiment
+                        </button>
+                      </div>
                     </div>
                   )}
                   {r.status === "unassigned" && (
@@ -4821,6 +4924,16 @@ export default function App() {
                     (() => {
                       const tel = telemetryByReactor[r.id];
                       const stale = chartLiveMode && (!tel || !tel.isLive);
+                      const setpoint =
+                        reactorSetpoints[experiment?.experiment]?.[r.id];
+                      const displayTemp = runningJobs.temperature_automation
+                        ? setpoint?.temp ?? parseFloat(targetTemp)
+                        : tel?.temp != null && Number.isFinite(tel.temp)
+                          ? tel.temp
+                          : null;
+                      const displayRpm = runningJobs.stirring
+                        ? setpoint?.rpm ?? (parseInt(targetRpm) || 400)
+                        : 0;
                       return (
                         <div style={{ margin: "8px 0" }}>
                           <AnimatedVial
@@ -4831,16 +4944,8 @@ export default function App() {
                                 ? tel.od
                                 : null
                             }
-                            tempValue={
-                              tel?.temp != null && Number.isFinite(tel.temp)
-                                ? tel.temp
-                                : null
-                            }
-                            stirringRpm={
-                              runningJobs.stirring
-                                ? parseInt(targetRpm) || 400
-                                : 0
-                            }
+                            tempValue={displayTemp}
+                            stirringRpm={displayRpm}
                             growthRate={
                               tel?.growth != null && Number.isFinite(tel.growth)
                                 ? tel.growth
@@ -5078,11 +5183,11 @@ export default function App() {
                               ? th.warning
                               : r.status === "assigned_elsewhere"
                                 ? th.textSecondary
-                              : r.status === "unassigned"
-                                ? th.accent
-                                : r.status === "disconnected"
-                                  ? th.textMuted
-                                  : th.danger,
+                                : r.status === "unassigned"
+                                  ? th.accent
+                                  : r.status === "disconnected"
+                                    ? th.textMuted
+                                    : th.danger,
                         background:
                           r.status === "online"
                             ? th.successBg
@@ -5090,11 +5195,11 @@ export default function App() {
                               ? th.warningBg
                               : r.status === "assigned_elsewhere"
                                 ? th.bgAlt
-                              : r.status === "unassigned"
-                                ? th.accentLight
-                                : r.status === "disconnected"
-                                  ? th.bgAlt
-                                  : th.dangerBg,
+                                : r.status === "unassigned"
+                                  ? th.accentLight
+                                  : r.status === "disconnected"
+                                    ? th.bgAlt
+                                    : th.dangerBg,
                       }}
                     >
                       {r.status === "online"
@@ -5103,31 +5208,54 @@ export default function App() {
                           ? "Needs Fix"
                           : r.status === "assigned_elsewhere"
                             ? `On ${r.assignedExperiment || "other exp"}`
-                          : r.status === "unassigned"
-                            ? "Unassigned"
-                            : r.status === "disconnected"
-                              ? "Disconnected"
-                              : "Offline"}
+                            : r.status === "unassigned"
+                              ? "Unassigned"
+                              : r.status === "disconnected"
+                                ? "Disconnected"
+                                : "Offline"}
                     </span>
                   </div>
                   <div style={{ display: "flex", gap: 6 }}>
                     {r.status === "assigned_elsewhere" && (
-                      <button
-                        onClick={() => selectExperiment(r.assignedExperiment)}
-                        style={{
-                          padding: "6px 12px",
-                          borderRadius: 7,
-                          border: `1px solid ${th.border}`,
-                          background: th.surface,
-                          color: th.textSecondary,
-                          fontSize: 15,
-                          fontWeight: 600,
-                          cursor: "pointer",
-                          fontFamily: "inherit",
-                        }}
-                      >
-                        Open {r.assignedExperiment}
-                      </button>
+                      <>
+                        <button
+                          onClick={() => handleAssign(r.id)}
+                          disabled={assigningId === r.id || !experiment}
+                          style={{
+                            padding: "6px 12px",
+                            borderRadius: 7,
+                            border: "none",
+                            background: th.accent,
+                            color: "#fff",
+                            fontSize: 15,
+                            fontWeight: 600,
+                            cursor:
+                              assigningId === r.id || !experiment
+                                ? "not-allowed"
+                                : "pointer",
+                            fontFamily: "inherit",
+                            opacity: assigningId === r.id ? 0.6 : 1,
+                          }}
+                        >
+                          {assigningId === r.id ? "Moving…" : "Move here"}
+                        </button>
+                        <button
+                          onClick={() => selectExperiment(r.assignedExperiment)}
+                          style={{
+                            padding: "6px 12px",
+                            borderRadius: 7,
+                            border: `1px solid ${th.border}`,
+                            background: th.surface,
+                            color: th.textSecondary,
+                            fontSize: 15,
+                            fontWeight: 600,
+                            cursor: "pointer",
+                            fontFamily: "inherit",
+                          }}
+                        >
+                          Open {r.assignedExperiment}
+                        </button>
+                      </>
                     )}
                     {r.status === "unassigned" && (
                       <button
@@ -5293,9 +5421,7 @@ export default function App() {
                             color: th.textMuted,
                           }}
                         >
-                          {r
-                            ? getCultureLabel(r.id) || r.label
-                            : id}{" "}
+                          {r ? getCultureLabel(r.id) || r.label : id}{" "}
                           <span
                             style={{
                               fontFamily: "'JetBrains Mono',monospace",
@@ -5530,7 +5656,9 @@ export default function App() {
                       background: experimentTableView.rows.length
                         ? th.accent
                         : th.bgAlt,
-                      color: experimentTableView.rows.length ? "#fff" : th.textMuted,
+                      color: experimentTableView.rows.length
+                        ? "#fff"
+                        : th.textMuted,
                       fontSize: 14,
                       fontWeight: 700,
                       cursor: experimentTableView.rows.length
@@ -5580,8 +5708,8 @@ export default function App() {
                     fontSize: 16,
                   }}
                 >
-                  No time series data for this experiment yet. Start OD, temperature,
-                  or growth jobs on assigned bioreactors.
+                  No time series data for this experiment yet. Start OD,
+                  temperature, or growth jobs on assigned bioreactors.
                 </div>
               ) : (
                 <>
@@ -5593,8 +5721,9 @@ export default function App() {
                       borderBottom: `1px solid ${th.borderLight}`,
                     }}
                   >
-                    Preview (first 500 rows). Export CSV downloads the full dataset
-                    ({experimentTableView.rows.length.toLocaleString()} rows).
+                    Preview (first 500 rows). Export CSV downloads the full
+                    dataset ({experimentTableView.rows.length.toLocaleString()}{" "}
+                    rows).
                   </div>
                   <div style={{ maxHeight: "65vh", overflow: "auto" }}>
                     <table
@@ -5628,29 +5757,31 @@ export default function App() {
                         </tr>
                       </thead>
                       <tbody>
-                        {experimentTableView.rows.slice(0, 500).map((row, i) => (
-                          <tr
-                            key={row._ts ?? i}
-                            style={{
-                              background:
-                                i % 2 === 0 ? th.surface : th.bgAlt + "80",
-                            }}
-                          >
-                            {experimentTableView.columns.map((col) => (
-                              <td
-                                key={col.key}
-                                style={{
-                                  padding: "8px 12px",
-                                  borderBottom: `1px solid ${th.borderLight}`,
-                                  color: th.text,
-                                  whiteSpace: "nowrap",
-                                }}
-                              >
-                                {row[col.key] ?? ""}
-                              </td>
-                            ))}
-                          </tr>
-                        ))}
+                        {experimentTableView.rows
+                          .slice(0, 500)
+                          .map((row, i) => (
+                            <tr
+                              key={row._ts ?? i}
+                              style={{
+                                background:
+                                  i % 2 === 0 ? th.surface : th.bgAlt + "80",
+                              }}
+                            >
+                              {experimentTableView.columns.map((col) => (
+                                <td
+                                  key={col.key}
+                                  style={{
+                                    padding: "8px 12px",
+                                    borderBottom: `1px solid ${th.borderLight}`,
+                                    color: th.text,
+                                    whiteSpace: "nowrap",
+                                  }}
+                                >
+                                  {row[col.key] ?? ""}
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
                       </tbody>
                     </table>
                   </div>
@@ -5977,7 +6108,9 @@ export default function App() {
                             opacity: pumpTestBlock ? 0.75 : 1,
                           }}
                         >
-                          {pumpRunning ? "Running..." : `Test run ${pumpTestSec}s`}
+                          {pumpRunning
+                            ? "Running..."
+                            : `Test run ${pumpTestSec}s`}
                         </button>
                       </div>
                       <p
@@ -6811,9 +6944,8 @@ export default function App() {
                 lineHeight: 1.5,
               }}
             >
-              Select which bioreactors to include in "
-              {experiment?.experiment}". Only assigned units will run — others
-              stay free.
+              Select which bioreactors to include in "{experiment?.experiment}".
+              Units on another experiment will be moved here automatically.
             </p>
             {assignableReactors.length ? (
               <div
@@ -6863,6 +6995,10 @@ export default function App() {
                           }}
                         >
                           {r.id}
+                          {r.status === "assigned_elsewhere" &&
+                            r.assignedExperiment
+                            ? ` · on ${r.assignedExperiment}`
+                            : ""}
                         </div>
                       </div>
                     </label>
@@ -6878,9 +7014,8 @@ export default function App() {
                   lineHeight: 1.5,
                 }}
               >
-                No unassigned bioreactors are available. Assign units from the
-                Overview or Bioreactors page, or unassign them from another
-                experiment first.
+                No available bioreactors are connected. Power on units or check
+                cluster connectivity, then try again.
               </p>
             )}
             <div style={{ display: "flex", gap: 10 }}>
