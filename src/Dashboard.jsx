@@ -450,7 +450,9 @@ const fetchRunningJobsForUnits = async (unitIds, experimentName) => {
         { unitId },
       );
       for (const j of parseRunningJobs(jobs, experimentName)) {
-        flags[j.job_name] = true;
+        if (EXPERIMENT_JOB_NAMES.has(j.job_name)) {
+          flags[j.job_name] = true;
+        }
       }
     }),
   );
@@ -3484,9 +3486,9 @@ export default function App() {
   }, [targetRpm]);
   const [runningJobs, setRunningJobs] = useState({});
   const manualJobOverride = useRef({}); // brief optimistic UI after start/stop clicks
-  const anyJobRunning = Object.values(runningJobs).some(Boolean);
+  const experimentJobsRunning = hasExperimentJobsRunning(runningJobs);
   /** Jobs actively running on this experiment right now (not archive, not assignment). */
-  const experimentIsLive = anyJobRunning;
+  const experimentIsLive = experimentJobsRunning;
   const chartSubtitle = (count, liveJobRunning, { archive = false } = {}) => {
     if (!count) {
       return experimentIsLive ? "Waiting for data..." : "No data recorded";
@@ -4496,34 +4498,19 @@ export default function App() {
                 ))}
               </select>
               <button
-                onClick={() => {
-                  if (anyJobRunning) {
-                    showFeedback(
-                      "Stop the current experiment first",
-                      `Jobs are still running on "${experiment?.experiment}". Stop it before starting a new experiment.`,
-                      "error",
-                    );
-                    return;
-                  }
-                  setShowNewExp(true);
-                }}
+                onClick={() => setShowNewExp(true)}
                 style={{
                   padding: "6px 16px",
                   borderRadius: 8,
-                  border: `1.5px solid ${anyJobRunning ? th.border : th.accent}`,
-                  background: anyJobRunning ? th.bgAlt : th.accentLight,
-                  color: anyJobRunning ? th.textMuted : th.accent,
+                  border: `1.5px solid ${th.accent}`,
+                  background: th.accentLight,
+                  color: th.accent,
                   fontSize: 14,
                   fontWeight: 700,
-                  cursor: anyJobRunning ? "not-allowed" : "pointer",
+                  cursor: "pointer",
                   fontFamily: "inherit",
-                  opacity: anyJobRunning ? 0.7 : 1,
                 }}
-                title={
-                  anyJobRunning
-                    ? "Stop the current experiment before starting a new one"
-                    : ""
-                }
+                title="Create a new experiment (running experiments can continue on their bioreactors)"
               >
                 + New Experiment
               </button>
@@ -4551,7 +4538,7 @@ export default function App() {
                   ? ` · offline: ${assignedOfflineIds.join(", ")}`
                   : ""}
               </span>
-              {anyJobRunning ? (
+              {experimentJobsRunning ? (
                 <button
                   onClick={() => {
                     if (!experiment) return;
@@ -6832,14 +6819,7 @@ export default function App() {
               <button
                 onClick={async () => {
                   if (!newExpName.trim()) return;
-                  if (anyJobRunning) {
-                    showFeedback(
-                      "Stop the current experiment first",
-                      "Jobs are still running. Stop the current experiment before creating a new one.",
-                      "error",
-                    );
-                    return;
-                  }
+                  const previousExp = experiment?.experiment;
                   setCreatingExp(true);
                   const name = newExpName.trim();
                   const res = await createExperiment(name, newExpDesc.trim());
@@ -6848,9 +6828,15 @@ export default function App() {
                     setShowNewExp(false);
                     setNewExpName("");
                     setNewExpDesc("");
+                    const stillRunning =
+                      previousExp &&
+                      previousExp !== name &&
+                      experimentJobsRunning;
                     showFeedback(
                       "Experiment created",
-                      `"${name}" is now active.`,
+                      stillRunning
+                        ? `"${name}" is ready. Jobs are still running on "${previousExp}" — switch back there to stop them, or assign other bioreactors to this one.`
+                        : `"${name}" is now active.`,
                       "success",
                     );
                   } else {
